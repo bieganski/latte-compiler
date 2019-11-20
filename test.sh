@@ -15,13 +15,24 @@ test_good() {
 test_bad() {
     echo "TESTING BAD STARTING..."
     for t in $TESTS; do
-        ./insc_llvm examples/$t.ins
-        lli examples/$t.bc > examples/$t.myout
+        ./latc lattests/bad/$t.lat
     done;
-    compare_outs examples
+    compare_bad_outs lattests/bad
     echo "TESTING BAD DONE"
 
 }
+
+compare_bad_outs() {
+    DIR=$1
+    for t in $TESTS; do
+        if grep -q ERROR ${DIR}/$t.myout; then
+            echo "$t passed."
+        else
+            echo "$t NOT passsed!"
+        fi
+    done;
+}
+
 
 compare_outs() {
     DIR=$1
@@ -34,4 +45,4 @@ compare_outs() {
     done;
 }
 
-do_test
+test_bad

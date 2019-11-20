@@ -1,10 +1,21 @@
-import AbsInstant
-import ParInstant
-import SkelInstant
-import PrintInstant
-import SkelInstant
-import LexInstant
+import AbsLatte
+import ParLatte
+import SkelLatte
+import PrintLatte
+import SkelLatte
+import LexLatte
 import ErrM
+
+import System.IO (hGetContents)
+import System.Environment (getArgs)
+import qualified Data.Text as T
+import Text.Printf(printf)
+import Control.Monad.State
+import Control.Monad.Identity
+import Control.Monad(forM)
+import qualified Data.Map as Map
+import System.FilePath
+import System.Process
 
 -- bnfc stuff
 type ParseFun a = [Token] -> Err a
@@ -24,15 +35,13 @@ runFile v f = readFile f >>= run v f
 run :: Verbosity -> FilePath -> String -> IO ()
 run v fp s = do
   let ts = pProgram $ myLLexer s
+  let outFile = dropExtension fp <.> "myout"
   case ts of
-           Bad s    -> putStrLn "\nParse failed...\n"
+           Bad s    -> do
+             writeFile outFile "ERROR\n"
            Ok  tree -> do
-             let ir = T.unpack $ buildIR tree
-             let outLL = dropExtension fp <.> "ll"
-             writeFile outLL ir
-             readProcess "llvm-as" [outLL] ""
-             return ()
-
+             writeFile outFile "OK\n"
+           
 main :: IO ()
 main = do
   args <- getArgs
