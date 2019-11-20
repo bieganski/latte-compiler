@@ -1,0 +1,17 @@
+name: instant-compiler
+version: '1.0'
+author: Mateusz Biegański
+
+executables:
+  latc:
+    main:          latc.hs
+    source-dirs:   src
+
+dependencies:
+  - base >= 4.7 && < 5
+  - text
+  - array
+  - containers
+  - mtl
+  - filepath
+  - process
