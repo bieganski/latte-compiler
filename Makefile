@@ -1,3 +1,5 @@
 all:
-    stack install --local-bin-path=$(shell pwd) || stack install --local-bin-path=$(shell pwd) || /home/students/inf/PUBLIC/MRJP/Stack/stack install --local-bin-path=$(shell pwd)
+	# make -B -C src/
+	# rm src/TestLatte.hs
+	stack install --local-bin-path=$(shell pwd)
 

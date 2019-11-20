@@ -1,0 +1,38 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 7b03c47d6c60317b5c6f56749259b9974eaf1aaf4caeb0c85988e9213fd1c3cf
+
+name:           latte-compiler
+version:        1.0
+author:         Mateusz Biegański
+maintainer:     Mateusz Biegański
+build-type:     Simple
+
+executable latc
+  main-is: latc.hs
+  other-modules:
+      AbsLatte
+      ErrM
+      LexLatte
+      LexLatte
+      ParLatte
+      ParLatte
+      PrintLatte
+      SkelLatte
+      TestLatte
+      Paths_latte_compiler
+  hs-source-dirs:
+      src
+  build-depends:
+      array
+    , base >=4.7 && <5
+    , containers
+    , filepath
+    , mtl
+    , process
+    , text
+  default-language: Haskell2010
