@@ -1,0 +1,5 @@
+* Wyrażenie logiczne zwracają typ boolean i są obliczane leniwie 
+(drugi argument nie jest wyliczany gdy pierwszy determinuje wartość wyrażenia).
+
+
+
