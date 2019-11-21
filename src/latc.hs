@@ -77,7 +77,7 @@ listProgramExpressions (Program topDefs) = foldr (++) []
   (map listBlockExpressions $ map (\(FnDef _ _ _ b) -> b) topDefs)
 
 
-belongs :: S.Set a -> a -> Bool
+belongs :: Ord a => S.Set a -> a -> Bool
 belongs names name = case S.lookupIndex name names of
     Nothing -> False
     Just _ -> True
@@ -93,23 +93,37 @@ functionUsagesCheck :: Program -> FunctionM ()
 functionUsagesCheck p@(Program topDefs) = do
   funNames <- get
   let exprs = listProgramExpressions p
-  let usedFunNames = usedFunctionsNames funNames exprs
-  let check = \names -> \x -> when (not $ belongs x names) (throwError $ T.pack $ "usage of not defined function: " ++ x)
-  mapM (funNames check) usedFunNames
+  let usedFunNames = usedFunctionsNames exprs
+  let check = \names -> \x -> when (not $ belongs names x) (throwError $ T.pack $ "usage of not defined function: " ++ x)
+  mapM (check funNames) usedFunNames
   return ()
   
 usedFunNames :: [Expr] -> S.Set String -> [String]
 usedFunNames [] _ = [] 
 usedFunNames (e:es) names = case e of
-  EApp id _ -> id:(usedFunNames es names)
+  EApp (Ident id) _ -> id:(usedFunNames es names)
 
 
 getFilteredRepeats :: Ord b => [a] -> (a -> Bool) -> (a -> b) -> [b]
 getFilteredRepeats lst filt f = repeated $ map f (filter filt lst)
 
 
-runFile :: Verbosity -> FilePath -> IO ()
-runFile v f = readFile f >>= run v f
+checkFunctionCases :: Program -> FunctionM ()
+checkFunctionCases p = do
+  let funNamesLst = getFunctionNames p
+  put (S.fromList funNamesLst)
+  functionNamesCheck p
+  return ()
+  
+
+
+runStateM :: StateM s a -> s -> IO (Either T.Text a)
+runStateM comp s = evalStateT (runExceptT comp) s
+
+
+funCheckState0 :: S.Set String
+funCheckState0 = S.empty
+
 
 run :: Verbosity -> FilePath -> String -> IO ()
 run v fp s = do
@@ -119,8 +133,19 @@ run v fp s = do
            Bad s    -> do
              writeFile outFile "ERROR\n"
            Ok  tree -> do
-             writeFile outFile "OK\n"
-           
+             res <- runStateM (checkFunctionCases tree) funCheckState0
+             case res of
+               Left s -> do
+                 putStrLn $ T.unpack s
+                 writeFile outFile $ "ERROR\nSEMANTIC CHECK FAILED:\n" ++ (T.unpack s)
+               Right _ -> do
+                 writeFile outFile "OK\n"
+
+
+runFile :: Verbosity -> FilePath -> IO ()
+runFile v f = readFile f >>= run v f
+
+
 main :: IO ()
 main = do
   args <- getArgs
