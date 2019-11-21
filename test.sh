@@ -2,6 +2,8 @@
 
 TESTS=`ls -1 lattests/bad/ | grep lat | cut -d \. -f 1`
 
+MY_OUTS=`ls -1 lattests/bad/ | grep myout`
+
 test_good() {
     echo "TESTING GOOD STARTING..."
     for t in $TESTS; do
@@ -15,7 +17,7 @@ test_good() {
 test_bad() {
     echo "TESTING BAD STARTING..."
     for t in $TESTS; do
-        ./latc lattests/bad/$t.lat
+        stack run lattests/bad/$t.lat
     done;
     compare_bad_outs lattests/bad
     echo "TESTING BAD DONE"
@@ -45,4 +47,11 @@ compare_outs() {
     done;
 }
 
+clean() {
+    for f in $MY_OUTS; do
+        rm -rf $f
+    done;
+}
+
+clean
 test_bad

@@ -23,14 +23,16 @@ import qualified Data.Map as Map
 import System.FilePath
 import System.Process
 import qualified Data.Set as S
-import Data.List.Unique(repeated)
+import Data.List.Unique(repeated, isUnique)
 import Data.List(elemIndex)
+
+import Debug.Trace
+
 
 -- bnfc stuff
 type ParseFun a = [Token] -> Err a
 myLLexer = myLexer
 type Verbosity = Int
-
 
 
 type EnvM e   = ExceptT T.Text (ReaderT e IO)
@@ -63,6 +65,7 @@ functionNamesCheck :: Program -> FunctionM ()
 functionNamesCheck p@(Program topDefs) = do
   let names = getFunctionNames p
   let reps = repeated names
+  traceM $ show reps
   when (reps /= []) (throwError $ T.pack $ "function names not unique: " ++ (show reps))
   when (not $ "main" `elem` names) (throwError $ T.pack "'main' not found!")
 
@@ -116,13 +119,50 @@ checkFunctionCases p = do
   return ()
   
 
-
 runStateM :: StateM s a -> s -> IO (Either T.Text a)
 runStateM comp s = evalStateT (runExceptT comp) s
 
 
 funCheckState0 :: S.Set String
 funCheckState0 = S.empty
+
+
+returnsS :: Stmt -> Bool
+returnsS s = case s of
+  Ret _ -> True
+  VRet -> True
+  BStmt (Block stmts) -> True `elem` (map returnsS stmts)
+  CondElse _ s1 s2 -> (returnsS s1) && (returnsS s2)
+  _ -> False
+
+
+returnsProperlyTopDef :: TopDef -> ExceptT T.Text IO ()
+returnsProperlyTopDef (FnDef _ (Ident id) _ (Block stmts)) = do
+  let rets = map returnsS stmts
+  case isUnique True rets of
+    Nothing -> throwError $ T.pack $ "function " ++ id ++ " does not return!" 
+    Just False -> throwError $ T.pack $ "function " ++ id ++ " returns multiple times!"
+    Just True -> when ((last rets) /= True) (throwError $ T.pack $ "returning statement must be the last one in function!")
+  return ()
+
+returnsProperly :: Program -> ExceptT T.Text IO ()
+returnsProperly (Program topDefs) = forM_ topDefs returnsProperlyTopDef
+
+ 
+isError :: Either T.Text b -> Bool
+isError (Left _) = True
+isError _ = False
+
+writeOutput :: Either T.Text a -> FilePath -> IO ()
+writeOutput res fp = case res of
+  Left err -> writeFile fp $ "ERROR\nSEMANTIC CHECK FAILED:\n" ++ (T.unpack err)
+  Right sth -> return () -- writeFile outFile $ "OK\n"
+
+
+doTest :: [Either T.Text a] -> FilePath -> IO ()
+doTest lst fp = case True `elem` (map isError lst) of
+  False -> writeFile fp $ "OK\n"
+  True -> forM_ lst (flip writeOutput fp)
 
 
 run :: Verbosity -> FilePath -> String -> IO ()
@@ -133,14 +173,21 @@ run v fp s = do
            Bad s    -> do
              writeFile outFile "ERROR\n"
            Ok  tree -> do
-             res <- runStateM (checkFunctionCases tree) funCheckState0
-             case res of
+             resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
+             resReturn <- runExceptT (returnsProperly tree)
+
+             let res = [resFunctions, resReturn]
+             
+             doTest res outFile
+{-
+             writeOutput resFunctions outFile
+             case resFunctions of
                Left s -> do
                  putStrLn $ T.unpack s
                  writeFile outFile $ "ERROR\nSEMANTIC CHECK FAILED:\n" ++ (T.unpack s)
                Right _ -> do
                  writeFile outFile "OK\n"
-
+-}
 
 runFile :: Verbosity -> FilePath -> IO ()
 runFile v f = readFile f >>= run v f
