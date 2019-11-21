@@ -42,6 +42,11 @@ unikalnosc nazw argumentow
 
 * 3 - unikalnosc zmiennych per blok + uzycie inicjalizowanych -- Env
 
+3.14 - niepowtarzalnosc nazw argumentow funkcji
+
+3.15 - calosciowe aplikacje
+
+
 * 4 + 3 - otypowanie całości, typ returnu i operacji ++,&& 
 oraz typ calla funkcji, sprawdzenie typu main -- Env
 Env :: Block -> (Map x -> type x)

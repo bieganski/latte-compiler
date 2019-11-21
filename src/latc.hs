@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
-
+{-# LANGUAGE BlockArguments #-}
 import AbsLatte
 import ParLatte
 import SkelLatte
@@ -148,7 +148,46 @@ returnsProperlyTopDef (FnDef _ (Ident id) _ (Block stmts)) = do
 returnsProperly :: Program -> ExceptT T.Text IO ()
 returnsProperly (Program topDefs) = forM_ topDefs returnsProperlyTopDef
 
- 
+
+
+uniqueArgsTopDef :: TopDef -> ExceptT T.Text IO ()
+uniqueArgsTopDef (FnDef _ (Ident id) args _) = do
+  let unpack = \(Arg _ (Ident id)) -> id
+  case repeated $ map unpack args of
+    [] -> return ()
+    x:xs -> throwError $ T.pack $ "argument name " ++ x ++ " not unique in function " ++ id
+
+uniqueArgs :: Program -> ExceptT T.Text IO ()
+uniqueArgs (Program topDefs) = forM_ topDefs uniqueArgsTopDef
+
+varsEnv0 :: TopDef -> [String]
+varsEnv0 (FnDef _ _ args _) = map (\(Arg _ (Ident id)) -> id) args
+
+
+itemId :: Item -> String
+itemId (NoInit (Ident id)) = id
+itemId (Init (Ident id) _) = id
+
+uniqueVarsPerBlock :: TopDef -> EnvM [String] ()
+uniqueVarsPerBlock (FnDef _ (Ident id) _ (Block [])) = return ()
+uniqueVarsPerBlock (FnDef t (Ident id) args (Block (s:stmts))) = do
+  let comp = uniqueVarsPerBlock (FnDef t (Ident id) args (Block stmts))
+  declared <- ask
+  case s of
+    Decl _ nnames -> do
+      let names = map itemId nnames
+      let res = map (flip elem declared) names
+      case elemIndex True res of
+        Nothing -> local ((++) names) comp
+        Just idx -> throwError $ T.pack $ "variable " ++ (show idx) ++ " declared multiple times in function " ++ id
+  
+  
+
+onlyInitializedVarsUsedTopDef :: TopDef -> EnvM [String] ()
+onlyInitializedVarsUsedTopDef = undefined
+
+--------------------------------------------------------------
+
 isError :: Either T.Text b -> Bool
 isError (Left _) = True
 isError _ = False
@@ -175,8 +214,9 @@ run v fp s = do
            Ok  tree -> do
              resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
              resReturn <- runExceptT (returnsProperly tree)
-
-             let res = [resFunctions, resReturn]
+             resArgs <- runExceptT (uniqueArgs tree)
+             
+             let res = [resFunctions, resReturn, resArgs]
              
              doTest res outFile
 {-
