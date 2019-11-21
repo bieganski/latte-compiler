@@ -36,6 +36,7 @@
 * 1 - pierwsze przejscie globalne
 
 uzyte funkcje, unikalnosc ich nazw, czy naleza do topdef -- State
+unikalnosc nazw argumentow
 
 * 2 - predykat ::returns per funkcja
 

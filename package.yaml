@@ -15,3 +15,4 @@ dependencies:
   - mtl
   - filepath
   - process
+  - Unique == 0.4.7.6
