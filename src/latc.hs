@@ -168,10 +168,11 @@ itemId :: Item -> String
 itemId (NoInit (Ident id)) = id
 itemId (Init (Ident id) _) = id
 
-uniqueVarsPerBlock :: TopDef -> EnvM [String] ()
-uniqueVarsPerBlock (FnDef _ (Ident id) _ (Block [])) = return ()
-uniqueVarsPerBlock (FnDef t (Ident id) args (Block (s:stmts))) = do
-  let comp = uniqueVarsPerBlock (FnDef t (Ident id) args (Block stmts))
+
+uniqueVarsPerBlock :: Block -> String -> EnvM [String] ()
+uniqueVarsPerBlock (Block []) funName = return ()
+uniqueVarsPerBlock (Block (s:stmts)) funName = do
+  let comp = uniqueVarsPerBlock (Block stmts) funName
   declared <- ask
   case s of
     Decl _ nnames -> do
@@ -179,13 +180,38 @@ uniqueVarsPerBlock (FnDef t (Ident id) args (Block (s:stmts))) = do
       let res = map (flip elem declared) names
       case elemIndex True res of
         Nothing -> local ((++) names) comp
-        Just idx -> throwError $ T.pack $ "variable " ++ (show idx) ++ " declared multiple times in function " ++ id
+        Just idx -> throwError $ T.pack $ "variable " ++ (show idx) ++ " declared multiple times in function " ++ funName
+    BStmt b -> uniqueVarsPerBlock b funName >> comp
+    _ -> comp
   
-  
+   
 
+uniqueVarsPerTopDef :: TopDef -> EnvM [String] ()
+uniqueVarsPerTopDef (FnDef _ (Ident id) _ b) = uniqueVarsPerBlock b id
+
+uniqueVars :: Program -> EnvM [String] ()
+uniqueVars (Program topDefs) = forM_ topDefs uniqueVarsPerTopDef
+
+ 
+varsInExp :: Exp -> [String]
+varsInExp e = case e of
+  EVar (Ident id) = id
+  EApp _ exprs = map varsInExp exprs
+  Neg e -> varsInExp e
+  Not e -> varsInExp e
+  EMul e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
+  EAdd e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
+  ERel e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
+  EMul e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
+  EOr e1 e2 -> (varsInExp e1) ++ (varsInExp e2)
+
+  
 onlyInitializedVarsUsedTopDef :: TopDef -> EnvM [String] ()
 onlyInitializedVarsUsedTopDef = undefined
 
+
+onlyInitializedVarsUsed :: Program -> EnvM [String] ()
+onlyInitializedVarsUsed = undefined
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool
@@ -215,8 +241,8 @@ run v fp s = do
              resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
              resReturn <- runExceptT (returnsProperly tree)
              resArgs <- runExceptT (uniqueArgs tree)
-             
-             let res = [resFunctions, resReturn, resArgs]
+             resUniqueVars <- runReaderT (runExceptT $ uniqueVars tree) []
+             let res = [resFunctions, resReturn, resArgs, resUniqueVars]
              
              doTest res outFile
 {-
