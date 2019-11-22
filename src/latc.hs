@@ -208,6 +208,19 @@ varsInExp e = case e of
   EOr e1 e2 -> (varsInExp e1) ++ (varsInExp e2)
   _ -> []
 
+callsInExp :: Expr -> [Expr]
+callsInExp e = case e of
+  EVar _ -> []
+  ee@(EApp _ es) -> concat $ [[ee]] ++ (map callsInExp es)
+  Neg e -> callsInExp e
+  Not e -> callsInExp e
+  EMul e1 _ e2 -> (callsInExp e1) ++ (callsInExp e2)
+  EAdd e1 _ e2 -> (callsInExp e1) ++ (callsInExp e2)
+  ERel e1 _ e2 -> (callsInExp e1) ++ (callsInExp e2)
+  EAnd e1 e2 -> (callsInExp e1) ++ (callsInExp e2)
+  EOr e1 e2 -> (callsInExp e1) ++ (callsInExp e2)
+  _ -> []
+
 showId :: Ident -> String
 showId (Ident id) = id
 
@@ -272,6 +285,66 @@ onlyDeclaredVarsUsedTopDef (FnDef _ id args b) = do
 onlyDeclaredVarsUsed :: Program -> EnvM [Ident] ()
 onlyDeclaredVarsUsed (Program topDefs) = forM_ topDefs onlyDeclaredVarsUsedTopDef
 
+
+checkArgsNum :: Ident -> Stmt -> Expr -> StateM [TopDef] ()
+checkArgsNum funName s (EApp id lst) = do
+  topdefs <- get
+  let names = map (\(FnDef _ id _ _) -> id) topdefs
+  let errMsg = "error in function " ++ (show funName) ++ " in " ++ (show s) ++ ": "
+  case elemIndex id names of
+    Nothing -> throwError $ T.pack $ errMsg ++ "not defined function usage (" ++ (show id) ++ ")"
+    Just idx -> case topdefs !! idx of
+      (FnDef _ idd args _) -> do
+        traceM $ (show $ length args) ++ "|||" ++ (show $ length lst)
+        when ((length lst) /= (length args)) (throwError $ T.pack $ errMsg ++ "funtion " ++ (show idd) ++ "applied to " ++ (show $ length lst) ++ " arguments, but it has " ++ (show $ length args) ++ "\n")
+
+_check :: Ident -> Stmt -> Expr -> StateM [TopDef] ()
+_check id s e = do
+  let calls = callsInExp e
+  traceM $ (show e) ++ ".." ++ (show calls)
+  forM_ calls (checkArgsNum id s)
+
+checkItem :: Ident -> Stmt -> Item -> StateM [TopDef] ()
+checkItem id s (Init (Ident idd) e) = do
+  _check id s e
+checkItem _ _ _ = return ()
+
+properArgumentNumberCallsBlock :: Ident -> Block -> StateM [TopDef] ()
+properArgumentNumberCallsBlock _ (Block []) = return ()
+properArgumentNumberCallsBlock id (Block (s:stmts)) = do
+  let comp = properArgumentNumberCallsBlock id (Block stmts)
+  let check = _check id s
+  case s of
+    BStmt b -> properArgumentNumberCallsBlock id b
+    Decl _ items -> forM_ items (checkItem id s)
+    Ass _ e -> do
+      check e
+    Ret e -> do
+      check e
+    Cond ee ss -> do
+      check ee
+      properArgumentNumberCallsBlock id (Block [ss])
+    CondElse ee ss1 ss2 -> do
+      check ee
+      properArgumentNumberCallsBlock id (Block [ss1])
+      properArgumentNumberCallsBlock id (Block [ss2])
+    While ee ss -> do
+      check ee
+      properArgumentNumberCallsBlock id (Block [ss])
+    SExp e -> do
+      check e
+    _ -> return ()
+  comp
+
+properArgumentNumberCallsTopDef :: TopDef -> StateM [TopDef] ()
+properArgumentNumberCallsTopDef (FnDef _ id _ b) = properArgumentNumberCallsBlock id b
+
+
+-- run wih empty state, i will take care of rest
+properArgumentNumberCalls :: Program -> StateM [TopDef] ()
+properArgumentNumberCalls (Program topDefs) = do
+  put topDefs
+  forM_ topDefs properArgumentNumberCallsTopDef
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool
@@ -303,12 +376,13 @@ run v fp s = do
              resArgs <- runExceptT (uniqueArgs tree)
              resUniqueVars <- runReaderT (runExceptT $ uniqueVars tree) []
              resDeclaredVars <- runReaderT (runExceptT $ onlyDeclaredVarsUsed tree) []
-
+             resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
              let res = [resFunctions,
                         resReturn,
                         resArgs,
                         resUniqueVars,
-                        resDeclaredVars]
+                        resDeclaredVars,
+                        resProperCallNum]
              
              doTest res outFile
 {-
