@@ -2,6 +2,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
+
 import AbsLatte
 import ParLatte
 import SkelLatte
@@ -65,7 +66,6 @@ functionNamesCheck :: Program -> FunctionM ()
 functionNamesCheck p@(Program topDefs) = do
   let names = getFunctionNames p
   let reps = repeated names
-  traceM $ show reps
   when (reps /= []) (throwError $ T.pack $ "function names not unique: " ++ (show reps))
   when (not $ "main" `elem` names) (throwError $ T.pack "'main' not found!")
 
@@ -140,7 +140,7 @@ returnsProperlyTopDef :: TopDef -> ExceptT T.Text IO ()
 returnsProperlyTopDef (FnDef _ (Ident id) _ (Block stmts)) = do
   let rets = map returnsS stmts
   case isUnique True rets of
-    Nothing -> throwError $ T.pack $ "function " ++ id ++ " does not return!" 
+    Nothing -> throwError $ T.pack $ "function " ++ id ++ " does not return in all cases!" 
     Just False -> throwError $ T.pack $ "function " ++ id ++ " returns multiple times!"
     Just True -> when ((last rets) /= True) (throwError $ T.pack $ "returning statement must be the last one in function!")
   return ()
@@ -211,13 +211,22 @@ varsInExp e = case e of
 showId :: Ident -> String
 showId (Ident id) = id
 
+itemIdent :: Item -> Ident
+itemIdent (NoInit id) = id
+itemIdent (Init id _) = id
+
+
 onlyDeclaredVarsUsedBlock :: Block -> Ident -> EnvM [Ident] ()
 onlyDeclaredVarsUsedBlock (Block []) _ = return ()
 onlyDeclaredVarsUsedBlock (Block (s:stmts)) funName = do
   let comp = onlyDeclaredVarsUsedBlock (Block stmts) funName
   declared <- ask
-  let check = \id -> when (id `elem `declared) (throwError $ T.pack $ "usage of not declared variable \'" ++ (showId id) ++ "\' in function " ++ (showId funName))
+  let _check = \stm -> \id -> when (not $ id `elem `declared) (throwError $ T.pack $ "usage of not declared variable \'" ++ (showId id) ++ "\' in function " ++ (showId funName) ++ " in statement " ++ (show stm) ++ " with env " ++ (show declared))
+  let check = _check s
   case s of
+    Decl _ varItems -> do
+      let vars = map itemIdent varItems 
+      local (\e -> e ++ vars) comp
     BStmt b -> do
       onlyDeclaredVarsUsedBlock b funName
       comp
@@ -259,6 +268,7 @@ onlyDeclaredVarsUsedTopDef (FnDef _ id args b) = do
   let env = map (\(Arg _ id) -> id) args
   local (\_ -> env) $ onlyDeclaredVarsUsedBlock b id
 
+-- run wih empty env, i will take care of rest
 onlyDeclaredVarsUsed :: Program -> EnvM [Ident] ()
 onlyDeclaredVarsUsed (Program topDefs) = forM_ topDefs onlyDeclaredVarsUsedTopDef
 
