@@ -187,31 +187,81 @@ uniqueVarsPerBlock (Block (s:stmts)) funName = do
    
 
 uniqueVarsPerTopDef :: TopDef -> EnvM [String] ()
-uniqueVarsPerTopDef (FnDef _ (Ident id) _ b) = uniqueVarsPerBlock b id
+uniqueVarsPerTopDef (FnDef _ (Ident id) args b) = do
+  let env = map (\(Arg _ (Ident id)) -> id) args
+  local (\_ -> env) $ uniqueVarsPerBlock b id
 
 uniqueVars :: Program -> EnvM [String] ()
 uniqueVars (Program topDefs) = forM_ topDefs uniqueVarsPerTopDef
 
  
-varsInExp :: Exp -> [String]
+varsInExp :: Expr -> [Ident]
 varsInExp e = case e of
-  EVar (Ident id) = id
-  EApp _ exprs = map varsInExp exprs
+  EVar idd@(Ident id) -> [idd]
+  EApp _ exprs -> concat $ map varsInExp exprs
   Neg e -> varsInExp e
   Not e -> varsInExp e
   EMul e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
   EAdd e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
   ERel e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
-  EMul e1 _ e2 -> (varsInExp e1) ++ (varsInExp e2)
+  EAnd e1 e2 -> (varsInExp e1) ++ (varsInExp e2)
   EOr e1 e2 -> (varsInExp e1) ++ (varsInExp e2)
+  _ -> []
 
-  
-onlyInitializedVarsUsedTopDef :: TopDef -> EnvM [String] ()
-onlyInitializedVarsUsedTopDef = undefined
+showId :: Ident -> String
+showId (Ident id) = id
+
+onlyDeclaredVarsUsedBlock :: Block -> Ident -> EnvM [Ident] ()
+onlyDeclaredVarsUsedBlock (Block []) _ = return ()
+onlyDeclaredVarsUsedBlock (Block (s:stmts)) funName = do
+  let comp = onlyDeclaredVarsUsedBlock (Block stmts) funName
+  declared <- ask
+  let check = \id -> when (id `elem `declared) (throwError $ T.pack $ "usage of not declared variable \'" ++ (showId id) ++ "\' in function " ++ (showId funName))
+  case s of
+    BStmt b -> do
+      onlyDeclaredVarsUsedBlock b funName
+      comp
+    Ass id e -> do
+      check id
+      forM_ (varsInExp e) check
+      comp
+    Incr id -> do
+      check id
+      comp
+    Decr id -> do
+      check id
+      comp
+    Ret e -> do
+      forM_ (varsInExp e) check
+      comp
+    Cond e ss -> do
+      forM_ (varsInExp e) check
+      onlyDeclaredVarsUsedBlock (Block [ss]) funName
+      comp
+    CondElse e ss1 ss2 -> do
+      forM_ (varsInExp e) check
+      onlyDeclaredVarsUsedBlock (Block [ss1]) funName
+      onlyDeclaredVarsUsedBlock (Block [ss2]) funName
+      comp
+    While e ss -> do
+      forM_ (varsInExp e) check
+      onlyDeclaredVarsUsedBlock (Block [ss]) funName
+      comp
+    SExp e -> do
+      forM_ (varsInExp e) check
+      comp
+    _ -> comp
+    
 
 
-onlyInitializedVarsUsed :: Program -> EnvM [String] ()
-onlyInitializedVarsUsed = undefined
+onlyDeclaredVarsUsedTopDef :: TopDef -> EnvM [Ident] ()
+onlyDeclaredVarsUsedTopDef (FnDef _ id args b) = do
+  let env = map (\(Arg _ id) -> id) args
+  local (\_ -> env) $ onlyDeclaredVarsUsedBlock b id
+
+onlyDeclaredVarsUsed :: Program -> EnvM [Ident] ()
+onlyDeclaredVarsUsed (Program topDefs) = forM_ topDefs onlyDeclaredVarsUsedTopDef
+
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool
@@ -242,7 +292,13 @@ run v fp s = do
              resReturn <- runExceptT (returnsProperly tree)
              resArgs <- runExceptT (uniqueArgs tree)
              resUniqueVars <- runReaderT (runExceptT $ uniqueVars tree) []
-             let res = [resFunctions, resReturn, resArgs, resUniqueVars]
+             resDeclaredVars <- runReaderT (runExceptT $ onlyDeclaredVarsUsed tree) []
+
+             let res = [resFunctions,
+                        resReturn,
+                        resArgs,
+                        resUniqueVars,
+                        resDeclaredVars]
              
              doTest res outFile
 {-
