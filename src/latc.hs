@@ -148,8 +148,6 @@ returnsProperlyTopDef (FnDef _ (Ident id) _ (Block stmts)) = do
 returnsProperly :: Program -> ExceptT T.Text IO ()
 returnsProperly (Program topDefs) = forM_ topDefs returnsProperlyTopDef
 
-
-
 uniqueArgsTopDef :: TopDef -> ExceptT T.Text IO ()
 uniqueArgsTopDef (FnDef _ (Ident id) args _) = do
   let unpack = \(Arg _ (Ident id)) -> id
@@ -163,11 +161,9 @@ uniqueArgs (Program topDefs) = forM_ topDefs uniqueArgsTopDef
 varsEnv0 :: TopDef -> [String]
 varsEnv0 (FnDef _ _ args _) = map (\(Arg _ (Ident id)) -> id) args
 
-
 itemId :: Item -> String
 itemId (NoInit (Ident id)) = id
 itemId (Init (Ident id) _) = id
-
 
 uniqueVarsPerBlock :: Block -> String -> EnvM [String] ()
 uniqueVarsPerBlock (Block []) funName = return ()
@@ -295,13 +291,13 @@ checkArgsNum funName s (EApp id lst) = do
     Nothing -> throwError $ T.pack $ errMsg ++ "not defined function usage (" ++ (show id) ++ ")"
     Just idx -> case topdefs !! idx of
       (FnDef _ idd args _) -> do
-        traceM $ (show $ length args) ++ "|||" ++ (show $ length lst)
+        -- traceM $ (show $ length args) ++ "|||" ++ (show $ length lst)
         when ((length lst) /= (length args)) (throwError $ T.pack $ errMsg ++ "funtion " ++ (show idd) ++ "applied to " ++ (show $ length lst) ++ " arguments, but it has " ++ (show $ length args) ++ "\n")
 
 _check :: Ident -> Stmt -> Expr -> StateM [TopDef] ()
 _check id s e = do
   let calls = callsInExp e
-  traceM $ (show e) ++ ".." ++ (show calls)
+  -- traceM $ (show e) ++ ".." ++ (show calls)
   forM_ calls (checkArgsNum id s)
 
 checkItem :: Ident -> Stmt -> Item -> StateM [TopDef] ()
