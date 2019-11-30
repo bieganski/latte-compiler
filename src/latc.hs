@@ -341,6 +341,22 @@ properArgumentNumberCalls :: Program -> StateM [TopDef] ()
 properArgumentNumberCalls (Program topDefs) = do
   put topDefs
   forM_ topDefs properArgumentNumberCallsTopDef
+
+
+
+type FunType = (Type, [Type]) -- return, args
+type TypecheckEnv = (Map.Map Ident FuncType, Map.Map Ident Type)
+
+
+typeCheckTopDef :: TopDef -> TypeEnv ()
+typeCheckTopDef (FnDef t id args b) = do
+  let b0 = Map.fromList $ map (\(Arg t id) -> ((b, id), t)) args
+  modifyVar $ const b0
+  createTypeEnvBlock b
+
+
+
+
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool

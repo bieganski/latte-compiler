@@ -10,3 +10,7 @@ ParLatte.y
 PrintLatte.hs
 SkelLatte.hs
 TestLatte.hs
+*.o
+*~
+*.hi
+*#*
