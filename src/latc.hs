@@ -4,6 +4,7 @@
 {-# LANGUAGE BlockArguments #-}
 
 import AbsLatte
+import Types
 import ParLatte
 import SkelLatte
 import PrintLatte
@@ -345,9 +346,11 @@ properArgumentNumberCalls (Program topDefs) = do
 
 
 type FunType = (Type, [Type]) -- return, args
-type TypecheckEnv = (Map.Map Ident FuncType, Map.Map Ident Type)
+type TypeCheckEnv = (Location, Map.Map Ident FunType, Map.Map Ident Type)
 
+-- TODO TODO tutaj cisniemy typecheck z readerem.
 
+{- 
 typeCheckTopDef :: TopDef -> TypeEnv ()
 typeCheckTopDef (FnDef t id args b) = do
   let b0 = Map.fromList $ map (\(Arg t id) -> ((b, id), t)) args
@@ -356,7 +359,40 @@ typeCheckTopDef (FnDef t id args b) = do
 
 
 
+typeCheck :: Program -> EnvM TypeCheckEnv ()
+typeCheck (Program topDefs) = forM_ topDefs typeCheckTopDef
+-}
 
+inferType :: Expr -> EnvM TypeCheckEnv Type
+inferType e = do
+  (loc, fenv, venv) <- ask
+  let errPrefix = printf "error in %s: " (show loc)
+  case e of
+    EVar id -> venv Map.! id
+    ELitInt _ -> return (Int :: Type)
+    ELitTrue -> return (Bool :: Type)
+    ELitFalse -> return (Bool :: Type)
+    EApp id exprs -> do
+      types <- forM exprs inferType
+      let fun = fenv Map.! id
+      if types == snd fun then return $ fst fun else throwError $ printf "%s function %s application arguments type mismatch: expected %s and obtained %s" errPrefix (show id) (show snd fun) (show types)
+    EString _ -> return (Str :: Type)
+    Neg e -> do
+      t <- inferType e
+      if t == Int then return Int else throwError $ printf "cannot negate %s type value in expression %s (must be Integer)" (show t) (show e)
+    Not e -> do
+      t <- inferType e
+      if t == Bool then return Bool else throwError $ printf "cannot negate %s type value in expression %s (must be Boolean)" (show t) (show e)
+    EMul e1 _ e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      if t1 == Int && t2 == Int then return Int else throwError $ printf $ "TODO"
+    EAdd e1 _ e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      if t1 == Int && t2 == Int then return Int else throwError $ printf $ "TODO"
+    _ -> return Int -- TODO
+    
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool
