@@ -356,43 +356,88 @@ typeCheckTopDef (FnDef t id args b) = do
   let b0 = Map.fromList $ map (\(Arg t id) -> ((b, id), t)) args
   modifyVar $ const b0
   createTypeEnvBlock b
+-}
 
 
+errorTypecheck :: Location -> Maybe Expr -> Type -> Type -> T.Text
+errorTypecheck loc ee actual shouldbe = case ee of
+  Just e -> T.pack $ printf "%s type mismatch in expression %s (got %s, should be %s)" (show loc) (show e) (show actual) (show shouldbe)
+  Nothing -> T.pack $ printf "%s type mismatch (got %s, should be %s)" (show loc) (show actual) (show shouldbe)
+
+
+typeCheckBlock :: Block -> EnvM TypeCheckEnv ()
+typeCheckBlock (Block []) = return ()
+typeCheckBlock (Block (s:stmts)) = do
+  (loc, fenv, venv) <- ask
+  case s of
+    Empty -> typeCheckBlock (Block stmts)
+    BStmt b -> (typeCheckBlock b) >> (typeCheckBlock (Block stmts))
+    Decl t items -> do
+      let v' = Map.fromList $ zip (map itemIdent items) (repeat t)
+      local (\(l,f,v) -> (l,f,v')) $ typeCheckBlock (Block stmts)
+    Ass id e -> do
+      t <- inferType e
+      let tt = venv Map.! id
+      when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
+      typeCheckBlock (Block stmts)
+    Incr id -> do
+      let t = venv Map.! id
+      when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
+      typeCheckBlock (Block stmts)
+    Decr id -> do
+      let t = venv Map.! id
+      when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
+      typeCheckBlock (Block stmts)
+    _ -> typeCheckBlock (Block stmts)
+    
+
+typeCheckTopDef :: TopDef -> EnvM TypeCheckEnv ()
+typeCheckTopDef (FnDef t id args b) = do
+  local (\(_, f, _) -> (FunName id, f, v)) (typeCheckBlock b) where
+    v = Map.fromList $ map (\(Arg t id) -> (id, t)) args
+
+
+getFuncType :: TopDef -> FunType
+getFuncType (FnDef t _ args _) = (t, argTs) where
+  argTs = map (\(Arg tt _) -> tt) args
 
 typeCheck :: Program -> EnvM TypeCheckEnv ()
-typeCheck (Program topDefs) = forM_ topDefs typeCheckTopDef
--}
+typeCheck (Program topDefs) = local (\(l,_,v) -> (l,fenv,v)) $ forM_ topDefs typeCheckTopDef where
+  fenv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
+
 
 inferType :: Expr -> EnvM TypeCheckEnv Type
 inferType e = do
   (loc, fenv, venv) <- ask
-  let errPrefix = printf "error in %s: " (show loc)
+  let errPrefix = show loc
   case e of
-    EVar id -> venv Map.! id
+    EVar id -> return $ venv Map.! id
     ELitInt _ -> return (Int :: Type)
     ELitTrue -> return (Bool :: Type)
     ELitFalse -> return (Bool :: Type)
     EApp id exprs -> do
       types <- forM exprs inferType
       let fun = fenv Map.! id
-      if types == snd fun then return $ fst fun else throwError $ printf "%s function %s application arguments type mismatch: expected %s and obtained %s" errPrefix (show id) (show snd fun) (show types)
+      if types /= (snd fun)
+        then throwError $ T.pack $ printf "%s function %s application arguments type mismatch: expected %s and obtained %s" errPrefix (show id) (show (snd fun)) (show types)
+        else return $ fst fun
     EString _ -> return (Str :: Type)
     Neg e -> do
       t <- inferType e
-      if t == Int then return Int else throwError $ printf "cannot negate %s type value in expression %s (must be Integer)" (show t) (show e)
+      if t == Int then return Int else throwError $ T.pack $ printf "cannot negate %s type value in expression %s (must be Integer)" (show t) (show e)
     Not e -> do
       t <- inferType e
-      if t == Bool then return Bool else throwError $ printf "cannot negate %s type value in expression %s (must be Boolean)" (show t) (show e)
+      if t == Bool then return Bool else throwError $ T.pack $ printf "cannot negate %s type value in expression %s (must be Boolean)" (show t) (show e)
     EMul e1 _ e2 -> do
       t1 <- inferType e1
       t2 <- inferType e2
-      if t1 == Int && t2 == Int then return Int else throwError $ printf $ "TODO"
+      if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "TODO"
     EAdd e1 _ e2 -> do
       t1 <- inferType e1
       t2 <- inferType e2
-      if t1 == Int && t2 == Int then return Int else throwError $ printf $ "TODO"
+      if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "TODO"
     _ -> return Int -- TODO
-    
+
 --------------------------------------------------------------
 
 isError :: Either T.Text b -> Bool
