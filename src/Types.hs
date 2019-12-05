@@ -9,5 +9,5 @@ data Location =
 
 instance Show Location where
   show what = case what of
-    FunName (Ident id) -> "error in function " ++ id ++ ": "
+    FunName (Ident id) -> "function " ++ id
     _ -> "TODO"

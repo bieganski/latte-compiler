@@ -374,7 +374,7 @@ typeCheckBlock (Block (s:stmts)) = do
     BStmt b -> (typeCheckBlock b) >> (typeCheckBlock (Block stmts))
     Decl t items -> do
       let v' = Map.fromList $ zip (map itemIdent items) (repeat t)
-      local (\(l,f,v) -> (l,f,v')) $ typeCheckBlock (Block stmts)
+      local (\(l,f,v) -> (l,f, Map.union v' v)) $ typeCheckBlock (Block stmts)
     Ass id e -> do
       t <- inferType e
       let tt = venv Map.! id
@@ -388,8 +388,41 @@ typeCheckBlock (Block (s:stmts)) = do
       let t = venv Map.! id
       when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
       typeCheckBlock (Block stmts)
-    _ -> typeCheckBlock (Block stmts)
-    
+    Ret e -> do
+      t <- inferType e
+      case loc of
+        FunName id -> do
+          let (tt, _) = fenv Map.! id
+          when (t /= tt) $ throwError $ T.pack $ printf "error in %s: return type mismatch (got %s, should be %s)" (show loc) (show t) (show tt)
+        _ -> error "NOT IMPLEMENTED"
+      typeCheckBlock (Block stmts)
+    VRet -> do
+      case loc of
+        FunName id -> do
+          let (tt, _) = fenv Map.! id
+          when (Void /= tt) $ throwError $ T.pack $ printf "error in %s: return type mismatch (got %s, should be %s)" (show loc) (show Void) (show tt)
+        _ -> error "NOT IMPLEMENTED"
+      typeCheckBlock (Block stmts)
+    Cond e ss -> do
+      t <- inferType e
+      when (t /= Bool) $ throwError $ T.pack $ printf "error in %s: must be boolean in if condition, got %s" (show loc) (show t)
+      typeCheckBlock (Block [ss])
+      typeCheckBlock (Block stmts)
+    CondElse e ss1 ss2 -> do
+      t <- inferType e
+      when (t /= Bool) $ throwError $ T.pack $ printf "error in %s: must be boolean in if condition, got %s" (show loc) (show t)
+      typeCheckBlock (Block [ss1])
+      typeCheckBlock (Block [ss2])
+      typeCheckBlock (Block stmts)
+    While e ss -> do
+      t <- inferType e
+      when (t /= Bool) $ throwError $ T.pack $ printf "error in %s: must be boolean in while condition, got %s" (show loc) (show t)
+      typeCheckBlock (Block [ss])
+      typeCheckBlock (Block stmts)
+    SExp e -> do
+      _ <- inferType e
+      typeCheckBlock (Block stmts)
+
 
 typeCheckTopDef :: TopDef -> EnvM TypeCheckEnv ()
 typeCheckTopDef (FnDef t id args b) = do
@@ -470,12 +503,14 @@ run v fp s = do
              resUniqueVars <- runReaderT (runExceptT $ uniqueVars tree) []
              resDeclaredVars <- runReaderT (runExceptT $ onlyDeclaredVarsUsed tree) []
              resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
+             typeCheck <- runReaderT (runExceptT $ typeCheck tree) (FunName (Ident "dummy"), Map.empty, Map.empty)
              let res = [resFunctions,
                         resReturn,
                         resArgs,
                         resUniqueVars,
                         resDeclaredVars,
-                        resProperCallNum]
+                        resProperCallNum,
+                        typeCheck]
              
              doTest res outFile
 {-
