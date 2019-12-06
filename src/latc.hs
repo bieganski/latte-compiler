@@ -348,16 +348,6 @@ properArgumentNumberCalls (Program topDefs) = do
 type FunType = (Type, [Type]) -- return, args
 type TypeCheckEnv = (Location, Map.Map Ident FunType, Map.Map Ident Type)
 
--- TODO TODO tutaj cisniemy typecheck z readerem.
-
-{- 
-typeCheckTopDef :: TopDef -> TypeEnv ()
-typeCheckTopDef (FnDef t id args b) = do
-  let b0 = Map.fromList $ map (\(Arg t id) -> ((b, id), t)) args
-  modifyVar $ const b0
-  createTypeEnvBlock b
--}
-
 
 errorTypecheck :: Location -> Maybe Expr -> Type -> Type -> T.Text
 errorTypecheck loc ee actual shouldbe = case ee of
@@ -373,21 +363,33 @@ typeCheckBlock (Block (s:stmts)) = do
     Empty -> typeCheckBlock (Block stmts)
     BStmt b -> (typeCheckBlock b) >> (typeCheckBlock (Block stmts))
     Decl t items -> do
+      let checkItem = \t2 -> \it -> case it of
+            NoInit id -> return ()
+            Init id e -> do
+              tt <- inferType e
+              when (t2 /= tt) $ throwError $ errorTypecheck loc (Just e) tt t2
+      forM_ items (checkItem t)
       let v' = Map.fromList $ zip (map itemIdent items) (repeat t)
       local (\(l,f,v) -> (l,f, Map.union v' v)) $ typeCheckBlock (Block stmts)
     Ass id e -> do
       t <- inferType e
-      let tt = venv Map.! id
-      when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
-      typeCheckBlock (Block stmts)
+      case Map.lookup id venv of
+        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
+        Just tt -> do
+          when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
+          typeCheckBlock (Block stmts)
     Incr id -> do
-      let t = venv Map.! id
-      when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
-      typeCheckBlock (Block stmts)
+      case Map.lookup id venv of
+        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
+        Just t -> do
+          when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
+          typeCheckBlock (Block stmts)
     Decr id -> do
-      let t = venv Map.! id
-      when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
-      typeCheckBlock (Block stmts)
+      case Map.lookup id venv of
+        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
+        Just t -> do
+          when (t /= Int) $ throwError $ errorTypecheck loc Nothing t Int
+          typeCheckBlock (Block stmts)
     Ret e -> do
       t <- inferType e
       case loc of
@@ -434,17 +436,29 @@ getFuncType :: TopDef -> FunType
 getFuncType (FnDef t _ args _) = (t, argTs) where
   argTs = map (\(Arg tt _) -> tt) args
 
-typeCheck :: Program -> EnvM TypeCheckEnv ()
-typeCheck (Program topDefs) = local (\(l,_,v) -> (l,fenv,v)) $ forM_ topDefs typeCheckTopDef where
-  fenv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
 
+checkMain :: EnvM TypeCheckEnv ()
+checkMain = do
+  (loc, fenv, _) <- ask
+  let comp = \(Ident name, (retType, ts)) -> case name of
+                                               "main" -> when (retType /= Int ) $ throwError $ T.pack $ "'main' type must be int!"
+                                               _      -> return ()
+  forM_ (Map.toList fenv) comp 
+                          
+  
+typeCheck :: Program -> EnvM TypeCheckEnv ()
+typeCheck (Program topDefs) = local (\(l,_,v) -> (l,fenv,v)) $ checkMain >> forM_ topDefs typeCheckTopDef where
+  fenv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
 
 inferType :: Expr -> EnvM TypeCheckEnv Type
 inferType e = do
   (loc, fenv, venv) <- ask
   let errPrefix = show loc
   case e of
-    EVar id -> return $ venv Map.! id
+    EVar id -> do
+      case Map.lookup id venv of
+        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
+        Just res -> return res
     ELitInt _ -> return (Int :: Type)
     ELitTrue -> return (Bool :: Type)
     ELitFalse -> return (Bool :: Type)
@@ -465,11 +479,30 @@ inferType e = do
       t1 <- inferType e1
       t2 <- inferType e2
       if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "TODO"
-    EAdd e1 _ e2 -> do
+    EAdd e1 op e2 -> do
       t1 <- inferType e1
       t2 <- inferType e2
-      if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "TODO"
-    _ -> return Int -- TODO
+      case (t1,t2,op) of
+            (Str,Str,Minus) -> throwError $ T.pack $ printf "error in %s: cannot subtract strings in %s!" (show loc) (show e)
+            (Str,Str,Plus)  -> return Str
+            (Int,Int,_)     -> return Int
+            _ -> throwError $ T.pack $ printf "error in %s: add type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
+    ERel e1 relOp e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      case (t1,t2,relOp) of
+        (Int,Int,_) -> return Int
+        (Str,Str,_) -> return Str
+        _ -> throwError $ T.pack $ printf "error in %s: type mismatch during comparision (%s and %s) in %s" (show loc) (show t1) (show t2) (show e)
+    EAnd e1 e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      if t1 == Bool && t2 == Bool then return Bool else throwError $ T.pack $ printf "error in %s: logical AND type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
+    EOr e1 e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      if t1 == Bool && t2 == Bool then return Bool else throwError $ T.pack $ printf "error in %s: logical OR type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
+
 
 --------------------------------------------------------------
 
