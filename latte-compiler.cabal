@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 9f8e3496d5fee5487046fb006064556d54664976f521f059e69f7a9342cc65c7
+-- hash: 3b4408d43a171a392115782f816865a2708d097bd088f49a8255c38104d75df4
 
 name:           latte-compiler
 version:        1.0
@@ -33,6 +33,7 @@ executable latc
     , base >=4.7 && <5
     , containers
     , filepath
+    , lens
     , mtl
     , process
     , text
