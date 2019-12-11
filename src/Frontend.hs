@@ -41,11 +41,11 @@ myLLexer = myLexer
 type Verbosity = Int
 
 
-type EnvM e   = ExceptT T.Text (ReaderT e IO)
-type StateM s = ExceptT T.Text (StateT s IO)
+-- type EnvM e   = ExceptT T.Text (ReaderT e IO)
+type EnvM e = ReaderT e (ExceptT T.Text IO)
+-- type StateM s = ExceptT T.Text (StateT s IO)
+type StateM s = StateT s (ExceptT T.Text IO)
 
-a :: EnvM Integer Integer
-a = undefined
 
 type FunctionCheckM = StateM (S.Set String)
 
@@ -117,8 +117,8 @@ checkFunctionCases p = do
   return ()
   
 
-runStateM :: StateM s a -> s -> IO (Either T.Text a)
-runStateM comp s = evalStateT (runExceptT comp) s
+--runStateM :: StateM s a -> s -> IO (Either T.Text a)
+-- runStateM comp s = evalStateT (runExceptT comp) s
 
 
 funCheckState0 :: S.Set String
@@ -499,4 +499,6 @@ inferType e = do
       t1 <- inferType e1
       t2 <- inferType e2
       if t1 == Bool && t2 == Bool then return Bool else throwError $ T.pack $ printf "error in %s: logical OR type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
+
+
 

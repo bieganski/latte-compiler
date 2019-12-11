@@ -24,6 +24,12 @@ import qualified Data.Text as T
 import qualified Data.Map as Map
 
 
+
+-- runStateM :: StateM s a -> s -> IO (Either T.Text a)
+-- runStateM comp s = evalStateT (runExceptT comp) s
+runStateM :: StateM s a -> s -> ExceptT T.Text IO s
+runStateM comp s = evalStateT comp s
+
 isError :: Either T.Text b -> Bool
 isError (Left _) = True
 isError _ = False
@@ -31,14 +37,29 @@ isError _ = False
 writeOutput :: Either T.Text a -> FilePath -> IO ()
 writeOutput res fp = case res of
   Left err -> writeFile fp $ "ERROR\nSEMANTIC CHECK FAILED:\n" ++ (T.unpack err)
-  Right sth -> return () -- writeFile outFile $ "OK\n"
+  Right sth -> writeFile fp $ "OK\n"
 
 
+{-
 doTest :: [Either T.Text a] -> FilePath -> IO ()
 doTest lst fp = case True `elem` (map isError lst) of
   False -> writeFile fp $ "OK\n"
   True -> forM_ lst (flip writeOutput fp)
+-}
 
+checkAll :: Program -> ExceptT T.Text IO ()
+checkAll prog = do
+  resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
+  resReturn <- returnsProperly tree
+  resArgs <- uniqueArgs tree
+  resUniqueVars <- runReaderT (uniqueVars tree) []
+  resDeclaredVars <- runReaderT (onlyDeclaredVarsUsed tree) []
+  resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
+  typeCheck <- runReaderT
+    (runExceptT $ typeCheck tree)
+    (FunName (Ident "dummy"), Map.empty, Map.empty)
+  return ()
+  
 
 run :: Verbosity -> FilePath -> String -> IO ()
 run v fp s = do
@@ -48,6 +69,10 @@ run v fp s = do
            Bad s    -> do
              writeFile outFile "ERROR\n"
            Ok  tree -> do
+             res <- checkAll tree
+             writeOutput res
+             
+{-
              resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
              doTest [resFunctions] outFile
              resReturn <- runExceptT (returnsProperly tree)
@@ -64,7 +89,7 @@ run v fp s = do
                         resProperCallNum,
                         typeCheck]
              doTest res outFile
-{-
+
              writeOutput resFunctions outFile
              case resFunctions of
                Left s -> do
