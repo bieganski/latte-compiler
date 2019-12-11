@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3b4408d43a171a392115782f816865a2708d097bd088f49a8255c38104d75df4
+-- hash: 63986ccf30f604d7c38811ef9076aee0b2a83beb5e99e1d46094906a94ade9c1
 
 name:           latte-compiler
 version:        1.0
@@ -13,10 +13,12 @@ maintainer:     Mateusz Biegański
 build-type:     Simple
 
 executable latc
-  main-is: latc.hs
+  main-is: Main.hs
   other-modules:
       AbsLatte
+      Backend
       ErrM
+      Frontend
       LexLatte
       LexLatte
       ParLatte

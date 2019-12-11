@@ -1,5 +1,22 @@
+{-# LANGUAGE BlockArguments #-}
+
 module Backend where
 
+import AbsLatte
+import Types
+import ParLatte
+import SkelLatte
+import PrintLatte
+import SkelLatte
+import LexLatte
+import ErrM
+
+import Frontend(StateM, itemIdent)
+
+import Control.Monad.Reader
+import Control.Monad.State
+
+import qualified Data.Map as Map
 
 -- TODO, mozliwe ze FuncType trzeba bedize importowac z frontendu
 type FuncType = (Type, [Type]) -- return, args

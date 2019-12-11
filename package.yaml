@@ -4,9 +4,8 @@ author: Mateusz Biegański
 
 executables:
   latc:
-    main:          latc.hs
+    main:          Main.hs
     source-dirs:   src
-
 dependencies:
   - base >= 4.7 && < 5
   - text

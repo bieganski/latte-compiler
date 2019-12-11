@@ -14,3 +14,5 @@ TestLatte.hs
 *~
 *.hi
 *#*
+*.dyn_o
+*.dyn_hi
