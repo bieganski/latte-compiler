@@ -47,17 +47,20 @@ type EnvM e = ReaderT e (ExceptT T.Text IO)
 type StateM s = StateT s (ExceptT T.Text IO)
 
 
+runStateM :: StateM s a -> s -> ExceptT T.Text IO a
+runStateM comp s = evalStateT comp s
+
 type FunctionCheckM = StateM (S.Set String)
+
+type FunctionM = StateM (S.Set String)
+
+
 
 getFunctionNames :: Program -> [String]
 getFunctionNames (Program topDefs) = map (\(FnDef _ (Ident name) _ _ ) -> name) topDefs
 
 checkFunctionNamesUnique :: Program -> S.Set String -> Bool
 checkFunctionNamesUnique p@(Program topDefs) s = (length topDefs) == (S.size s)
-
-
-
-type FunctionM = StateM (S.Set String)
 
 
 functionNamesCheck :: Program -> FunctionM ()
@@ -116,9 +119,6 @@ checkFunctionCases p = do
   functionNamesCheck p
   return ()
   
-
---runStateM :: StateM s a -> s -> IO (Either T.Text a)
--- runStateM comp s = evalStateT (runExceptT comp) s
 
 
 funCheckState0 :: S.Set String
@@ -502,3 +502,16 @@ inferType e = do
 
 
 
+checkAll :: Program -> ExceptT T.Text IO ()
+checkAll tree = do
+  resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
+  resReturn <- returnsProperly tree
+  resArgs <- uniqueArgs tree
+  resUniqueVars <- runReaderT (uniqueVars tree) []
+  resDeclaredVars <- runReaderT (onlyDeclaredVarsUsed tree) []
+  resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
+  typeCheck <- runReaderT
+    (typeCheck tree)
+    (FunName (Ident "dummy"), Map.empty, Map.empty)
+  return ()
+  
