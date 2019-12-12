@@ -163,10 +163,10 @@ itemId :: Item -> String
 itemId (NoInit (Ident id)) = id
 itemId (Init (Ident id) _) = id
 
-uniqueVarsPerBlock :: Block -> String -> EnvM [String] ()
-uniqueVarsPerBlock (Block []) funName = return ()
-uniqueVarsPerBlock (Block (s:stmts)) funName = do
-  let comp = uniqueVarsPerBlock (Block stmts) funName
+uniqueVarsPerBlock :: Block -> TopDef -> EnvM [String] ()
+uniqueVarsPerBlock (Block []) _ = return ()
+uniqueVarsPerBlock (Block (s:stmts)) f@(FnDef _ (Ident funName) _ _) = do
+  let comp = uniqueVarsPerBlock (Block stmts) f
   declared <- ask
   case s of
     Decl _ nnames -> do
@@ -174,16 +174,17 @@ uniqueVarsPerBlock (Block (s:stmts)) funName = do
       let res = map (flip elem declared) names
       case elemIndex True res of
         Nothing -> local ((++) names) comp
-        Just idx -> throwError $ T.pack $ "variable " ++ (show idx) ++ " declared multiple times in function " ++ funName
-    BStmt b -> uniqueVarsPerBlock b funName >> comp
+        Just idx -> throwError $ T.pack $ "variable " ++ (show (names !! idx)) ++ " declared multiple times in function " ++ funName
+    BStmt b -> local (\_ -> argsEnv0 f) (uniqueVarsPerBlock b f) >> comp
     _ -> comp
-  
-   
+
+argsEnv0 :: TopDef -> [String]
+argsEnv0 (FnDef _ _ args _) = map (\(Arg _ (Ident id)) -> id) args 
 
 uniqueVarsPerTopDef :: TopDef -> EnvM [String] ()
-uniqueVarsPerTopDef (FnDef _ (Ident id) args b) = do
-  let env = map (\(Arg _ (Ident id)) -> id) args
-  local (\_ -> env) $ uniqueVarsPerBlock b id
+uniqueVarsPerTopDef f@(FnDef _ _ _ b) = do
+  let env = argsEnv0 f
+  local (\_ -> env) $ uniqueVarsPerBlock b f
 
 uniqueVars :: Program -> EnvM [String] ()
 uniqueVars (Program topDefs) = forM_ topDefs uniqueVarsPerTopDef

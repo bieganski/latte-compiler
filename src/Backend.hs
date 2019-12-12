@@ -1,3 +1,4 @@
+
 {-# LANGUAGE BlockArguments #-}
 
 module Backend where
@@ -15,10 +16,13 @@ import Frontend(StateM, itemIdent)
 
 import Control.Monad.Reader
 import Control.Monad.State
-
+import Control.Monad.Except
+import Frontend(runStateM)
 import qualified Data.Map as Map
+import qualified Data.Text as T
 
--- TODO, mozliwe ze FuncType trzeba bedize importowac z frontendu
+import Debug.Trace
+
 type FuncType = (Type, [Type]) -- return, args
 type TypeEnv = (Map.Map Ident FuncType, Map.Map (Block, Ident) Type)
 
@@ -54,3 +58,13 @@ createTypeEnv (Program topDefs) = do
   let funcEnv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
   put (funcEnv, Map.empty)
   forM_ topDefs createTypeEnvTopDef
+
+
+t0 :: TypeEnv
+t0 = (Map.empty, Map.empty)
+
+runBackend :: Program -> ExceptT T.Text IO ()
+runBackend p@(Program topDefs) = do
+  tenv <- evalStateT (createTypeEnv p) t0
+  traceM $ show $ tenv
+  return ()

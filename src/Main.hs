@@ -1,7 +1,7 @@
 module Main where
 
 import Frontend
-import Backend
+import Backend(runBackend)
 
 
 import AbsLatte
@@ -24,11 +24,6 @@ import qualified Data.Text as T
 import qualified Data.Map as Map
 
 
--- runStateM :: StateM s a -> s -> IO (Either T.Text a)
--- runStateM comp s = evalStateT (runExceptT comp) s
-runStateM :: StateM s a -> s -> ExceptT T.Text IO a
-runStateM comp s = evalStateT comp s
-
 isError :: Either T.Text b -> Bool
 isError (Left _) = True
 isError _ = False
@@ -48,6 +43,13 @@ run v fp s = do
            Ok  tree -> do
              res <- runExceptT $ checkAll tree
              writeOutput res outFile
+             case res of
+               Left _ -> putStrLn "frontend check failed."
+               Right _ -> do
+                 putStrLn "frontend check succeeded."
+                 res2 <- runExceptT $ runBackend tree
+                 return ()
+                 
 
 runFile :: Verbosity -> FilePath -> IO ()
 runFile v f = readFile f >>= run v f
