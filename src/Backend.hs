@@ -17,7 +17,9 @@ import Frontend(StateM, itemIdent)
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
-import Frontend(runStateM)
+
+import Control.Lens
+
 import qualified Data.Map as Map
 import qualified Data.Text as T
 
@@ -32,7 +34,7 @@ createTypeEnvStmt b s = do
   case s of
     BStmt b -> createTypeEnvBlock b
     Decl t items -> do
-      let ids = map itemIdent items
+      let ids = map (^.iid) items
       let venv' = Map.union (Map.fromList $ zip (zip (repeat b) ids) (repeat t)) venv
       put (fenv, venv')
     _ -> return ()
@@ -63,8 +65,15 @@ createTypeEnv (Program topDefs) = do
 t0 :: TypeEnv
 t0 = (Map.empty, Map.empty)
 
-runBackend :: Program -> ExceptT T.Text IO ()
+runBackend :: Program -> ExceptT T.Text IO T.Text
 runBackend p@(Program topDefs) = do
   tenv <- evalStateT (createTypeEnv p) t0
-  traceM $ show $ tenv
-  return ()
+  return $ T.pack $ show tenv
+  -- traceM $ show $ tenv
+  -- return ()
+
+prolog :: String -> [String]
+prolog fname = ["source_filename = " ++ "\"" ++ fname ++ "\"",
+          "target datalayout = \"e-m:e-i64:64-f80:128-n8:16:32:64-S128\"",
+          "target triple = \"x86_64-pc-linux-gnu\"\n",
+          "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n"]
