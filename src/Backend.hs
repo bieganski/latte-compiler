@@ -12,6 +12,8 @@ import SkelLatte
 import LexLatte
 import ErrM
 
+import System.FilePath
+
 import Frontend(itemIdent)
 
 import Control.Monad.Reader
@@ -65,10 +67,9 @@ createTypeEnv (Program topDefs) = do
 
 
 prolog :: String -> [String]
-prolog fname = ["source_filename = " ++ "\"" ++ fname ++ "\"",
+prolog fname = ["source_filename = " ++ fname,
           "target datalayout = \"e-m:e-i64:64-f80:128-n8:16:32:64-S128\"",
-          "target triple = \"x86_64-pc-linux-gnu\"\n",
-          "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n"]
+          "target triple = \"x86_64-pc-linux-gnu\"\n"]
 
 epilog = ["declare i32 @printf(i8*, ...) #1",
           "attributes #0 = { noinline nounwind optnone uwtable \"correctly-rounded-divide-sqrt-fp-math\"=\"false\" \"disable-tail-calls\"=\"false\" \"less-precise-fpmad\"=\"false\" \"no-frame-pointer-elim\"=\"true\" \"no-frame-pointer-elim-non-leaf\" \"no-infs-fp-math\"=\"false\" \"no-jump-tables\"=\"false\" \"no-nans-fp-math\"=\"false\" \"no-signed-zeros-fp-math\"=\"false\" \"no-trapping-math\"=\"false\" \"stack-protector-buffer-size\"=\"8\" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+fxsr,+mmx,+sse,+sse2,+x87\" \"unsafe-fp-math\"=\"false\" \"use-soft-float\"=\"false\" }",
@@ -107,17 +108,18 @@ buildFunctionIR (FnDef ret (Ident funName) args _)  content = buildText
                        ++ (buildCommaString (map typeToIRSize (map (^.t) args))) ++ ")" ++ "#0 {"
 
  
-buildIR :: String -> [T.Text] -> T.Text
-buildIR filename funIRs = buildText [buildLines $ prolog filename,
+buildIR :: FilePath -> [T.Text] -> T.Text
+buildIR filename funIRs = buildText [buildLines $ prolog (show filename),
                                      buildText funIRs,
                                      buildLines epilog]
 
-type GenS = (T.Text, (Int, TypeEnv)) -- (code generated, (num of fresh variable, _)
+type GenS = (T.Text, Int, TypeEnv, Map.Map Ident String)
+-- (code generated, num of fresh variable, type env, Map for global string literals)
 
 getFresh :: GenM Int
 getFresh = do
-  num <- gets (fst . snd)
-  modify \(c, (num, t)) -> (c, (num+1, t))
+  (_,num,_,_) <- get
+  modify \(c, num, t, m) -> (c, num+1, t, m)
   return num
 
 
@@ -138,14 +140,16 @@ t0 :: TypeEnv
 t0 = (Map.empty, Map.empty)
 
 
-emitProgramIR :: Program -> GenM T.Text
-emitProgramIR = undefined
+emitProgramIR :: FilePath -> Program -> GenM T.Text
+emitProgramIR fp p = do
+  let funCode = map T.pack ["fun1", "fun2"]
+  return $ buildIR fp funCode
 
 
 -- TODO zmienne globalne
 runGenM :: Program -> GenM a -> Except T.Text a
-runGenM p comp = evalStateT (runReaderT comp Map.empty) (T.empty, (0, tenv))
+runGenM p comp = evalStateT (runReaderT comp Map.empty) (T.empty, 0, tenv, Map.empty)
   where tenv = execState (createTypeEnv p) t0
   
-runBackend :: Program -> Either T.Text T.Text
-runBackend p = runExcept $ runGenM p (emitProgramIR p)
+runBackend :: FilePath -> Program -> Either T.Text T.Text
+runBackend fp p = runExcept $ runGenM p (emitProgramIR fp p)
