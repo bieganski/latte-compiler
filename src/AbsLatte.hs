@@ -13,7 +13,8 @@ data Program = Program [TopDef]
 
 data TopDef = FnDef Type Ident [Arg] Block
   deriving (Eq, Ord, Show, Read)
-data Arg = Arg Type Ident
+
+data Arg = Arg {_t :: Type, _aid :: Ident}
   deriving (Eq, Ord, Show, Read)
 
 data Block = Block [Stmt]
@@ -69,3 +70,4 @@ data RelOp = LTH | LE | GTH | GE | EQU | NE
 makeLenses ''Item
 makeLenses ''Stmt
 makeLenses ''Expr
+makeLenses ''Arg

@@ -47,7 +47,7 @@ run v fp s = do
                Left _ -> putStrLn "frontend check failed."
                Right _ -> do
                  putStrLn "frontend check succeeded."
-                 res2 <- runExceptT $ runBackend tree
+                 let res2 = runBackend tree
                  case res2 of
                    Right t -> putStrLn $ "backend: " ++ T.unpack t
                    Left t -> putStrLn $ "backend error: " ++ T.unpack t

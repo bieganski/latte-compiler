@@ -41,9 +41,7 @@ myLLexer = myLexer
 type Verbosity = Int
 
 
--- type EnvM e   = ExceptT T.Text (ReaderT e IO)
 type EnvM e = ReaderT e (ExceptT T.Text IO)
--- type StateM s = ExceptT T.Text (StateT s IO)
 type StateM s = StateT s (ExceptT T.Text IO)
 
 

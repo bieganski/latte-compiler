@@ -12,7 +12,7 @@ import SkelLatte
 import LexLatte
 import ErrM
 
-import Frontend(StateM, itemIdent)
+import Frontend(itemIdent)
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -28,7 +28,8 @@ import Debug.Trace
 type FuncType = (Type, [Type]) -- return, args
 type TypeEnv = (Map.Map Ident FuncType, Map.Map (Block, Ident) Type)
 
-createTypeEnvStmt :: Block -> Stmt -> StateM TypeEnv ()
+
+createTypeEnvStmt :: Block -> Stmt -> State TypeEnv ()
 createTypeEnvStmt b s = do
   (fenv, venv) <- get
   case s of
@@ -39,12 +40,12 @@ createTypeEnvStmt b s = do
       put (fenv, venv')
     _ -> return ()
 
-createTypeEnvBlock :: Block -> StateM TypeEnv ()
+createTypeEnvBlock :: Block -> State TypeEnv ()
 createTypeEnvBlock b@(Block stmts) = forM_ (zip (repeat b) stmts) (uncurry createTypeEnvStmt)
 
 modifyVar = \f -> modify \(a, b) -> (a, f b)
 
-createTypeEnvTopDef :: TopDef -> StateM TypeEnv ()
+createTypeEnvTopDef :: TopDef -> State TypeEnv ()
 createTypeEnvTopDef (FnDef t id args b) = do
   let b0 = Map.fromList $ map (\(Arg t id) -> ((b, id), t)) args
   modifyVar $ const b0
@@ -55,22 +56,13 @@ getFuncType (FnDef t _ args _) = (t, argTs) where
   argTs = map (\(Arg tt _) -> tt) args
 
 
-createTypeEnv :: Program -> StateM TypeEnv ()
+createTypeEnv :: Program -> State TypeEnv TypeEnv
 createTypeEnv (Program topDefs) = do
   let funcEnv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
   put (funcEnv, Map.empty)
   forM_ topDefs createTypeEnvTopDef
+  get >>= return
 
-
-t0 :: TypeEnv
-t0 = (Map.empty, Map.empty)
-
-runBackend :: Program -> ExceptT T.Text IO T.Text
-runBackend p@(Program topDefs) = do
-  tenv <- evalStateT (createTypeEnv p) t0
-  return $ T.pack $ show tenv
-  -- traceM $ show $ tenv
-  -- return ()
 
 prolog :: String -> [String]
 prolog fname = ["source_filename = " ++ "\"" ++ fname ++ "\"",
@@ -107,12 +99,53 @@ typeToIRSize t = case t of
 buildCommaString :: [String] -> String 
 buildCommaString lst = T.unpack $ T.intercalate (T.pack ",") $ map T.pack lst
 
-buildFunctionIR :: String -> Type -> T.Text -> T.Text
-buildFunctionIR funName (Fun ret args)  content = buildText
+buildFunctionIR :: TopDef -> T.Text -> T.Text
+buildFunctionIR (FnDef ret (Ident funName) args _)  content = buildText
   [T.pack begin,
    content,
    T.pack "}"] where begin = "define " ++ (typeToIRSize ret) ++ "@" ++ funName ++ "("
-                       ++ (buildCommaString (map typeToIRSize args)) ++ ")" ++ "#0 {"
+                       ++ (buildCommaString (map typeToIRSize (map (^.t) args))) ++ ")" ++ "#0 {"
+
+ 
+buildIR :: String -> [T.Text] -> T.Text
+buildIR filename funIRs = buildText [buildLines $ prolog filename,
+                                     buildText funIRs,
+                                     buildLines epilog]
+
+type GenS = (T.Text, (Int, TypeEnv)) -- (code generated, (num of fresh variable, _)
+
+getFresh :: GenM Int
+getFresh = do
+  num <- gets (fst . snd)
+  modify \(c, (num, t)) -> (c, (num+1, t))
+  return num
 
 
+data Loc = LocReg { _n :: Integer } | LocMem { _n :: Integer}
 
+type GenE = Map.Map Ident Loc
+
+type GenM = ReaderT GenE (StateT GenS (Except T.Text))
+
+
+emitExp :: Expr -> GenM (Either Integer (T.Text, Loc))
+emitExp e = case e of
+  EVar id -> undefined
+  _ -> undefined
+
+
+t0 :: TypeEnv
+t0 = (Map.empty, Map.empty)
+
+
+emitProgramIR :: Program -> GenM T.Text
+emitProgramIR = undefined
+
+
+-- TODO zmienne globalne
+runGenM :: Program -> GenM a -> Except T.Text a
+runGenM p comp = evalStateT (runReaderT comp Map.empty) (T.empty, (0, tenv))
+  where tenv = execState (createTypeEnv p) t0
+  
+runBackend :: Program -> Either T.Text T.Text
+runBackend p = runExcept $ runGenM p (emitProgramIR p)
