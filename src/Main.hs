@@ -39,17 +39,20 @@ run v fp s = do
   let outFile = dropExtension fp <.> "myout"
   case ts of
            Bad s    -> do
+             -- TODO putStrLn "ERROR"
              writeFile outFile "ERROR\n"
            Ok  tree -> do
              res <- runExceptT $ checkAll tree
-             writeOutput res outFile
+             -- writeOutput res outFile
              case res of
                Left _ -> putStrLn "frontend check failed."
                Right _ -> do
                  putStrLn "frontend check succeeded."
                  let res2 = runBackend fp tree
                  case res2 of
-                   Right t -> putStrLn $ "backend: @@@@\n" ++ T.unpack t
+                   Right t -> do
+                     putStrLn $ "backend: @@@@\n" ++ T.unpack t
+                     writeFile outFile $ T.unpack t
                    Left t -> putStrLn $ "backend error: " ++ T.unpack t
                  return ()
                  

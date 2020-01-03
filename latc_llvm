@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [ -e "$1" ]
+then
+  ./latc "$1"
+  if [ $? -eq 0 ]
+  then
+    llvm-as -o "${1%.*}_del_.bc" "${1%.*}.myout"
+    llvm-link -o "${1%.*}.bc" "${1%.*}_del_.bc" lib/runtime.bc
+    rm "${1%.*}_del_.bc"
+  fi
+else
+  echo "ERROR" 1>&2
+  echo "Couldn't find file '$1'." 1>&2
+fi
