@@ -1,13 +1,13 @@
 module Types where
 
-import AbsLatte
+import qualified AbsLatte as Abs
 
 data Location =
-  FunName Ident | 
+  FunName Abs.Ident | 
   ClassMethod String String
 
 
 instance Show Location where
   show what = case what of
-    FunName (Ident id) -> "function " ++ id
+    FunName (Abs.Ident id) -> "function " ++ id
     _ -> "TODO"
