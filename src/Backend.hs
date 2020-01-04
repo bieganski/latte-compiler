@@ -113,6 +113,7 @@ data Instr =
   | Ret LLVMTypeVal
   | FunEnd
   | Bin
+  | FunCall LLVMValue LLVMType [LLVMTypeVal]
 
 instance Show Instr where
   show i = case i of
@@ -131,6 +132,9 @@ genExp e = case e of
   Abs.ELitInt n -> return (TInt, VInt n)
   Abs.ELitTrue -> return (TBool, VBool True)
   Abs.ELitFalse -> return (TBool, VBool False)
+  Abs.EApp id exps -> do
+    vals <- forM exps genExp
+    return $ FunCall
   _ -> undefined
 
 

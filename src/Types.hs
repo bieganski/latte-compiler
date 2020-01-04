@@ -69,13 +69,13 @@ instance Show LLVMType where
     TArr num t -> "[" ++ (show num) ++ ", " ++ (show t) ++ "]"
     TFun ret args -> "TODO"
 
-data LLVMVal = VInt Integer
+data LLVMVal = VDummy
+             | VInt Integer
              | VBool Bool
              | VVoid
              | VGlobStr Integer
              | VLabel Integer
              | VReg Integer
-             | VNull
              deriving (Eq, Ord)
 
 instance Show LLVMVal where
@@ -86,7 +86,7 @@ instance Show LLVMVal where
     VGlobStr n -> "@str." ++ show n
     VLabel n -> "TODO"
     VReg n -> "%R." ++ show n
-    VNull -> "NULL TODO"
+    VDummy -> "TODO nic"
 
 type LLVMTypeVal = (LLVMType, LLVMVal)
 
