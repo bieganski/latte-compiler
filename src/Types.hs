@@ -54,6 +54,7 @@ data LLVMType =
   TBool |
   TVoid |
   TArr Int LLVMType |
+  TChar |
   TFun LLVMType [LLVMType] |
   TPtr LLVMType |
   TLabel
@@ -64,6 +65,7 @@ instance Show LLVMType where
     TInt -> "i32"
     TBool -> "i8"
     TVoid -> "void"
+    TChar -> "i8"
     TPtr t -> (show t) ++ "*"
     TLabel -> "labelTODO"
     TArr num t -> "[" ++ (show num) ++ ", " ++ (show t) ++ "]"
@@ -87,6 +89,7 @@ instance Show LLVMVal where
     VLabel n -> "TODO"
     VReg n -> "%R." ++ show n
     VDummy -> "TODO nic"
+
 
 type LLVMTypeVal = (LLVMType, LLVMVal)
 

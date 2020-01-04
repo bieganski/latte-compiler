@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 63986ccf30f604d7c38811ef9076aee0b2a83beb5e99e1d46094906a94ade9c1
+-- hash: 14e33067e7af683774a89501159555e74bbc8d20e99ab5b17f377389354cff88
 
 name:           latte-compiler
 version:        1.0
@@ -26,6 +26,7 @@ executable latc
       PrintLatte
       SkelLatte
       Types
+      Utils
       Paths_latte_compiler
   hs-source-dirs:
       src
