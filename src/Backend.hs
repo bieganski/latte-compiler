@@ -90,8 +90,6 @@ buildIR filename funIRs = buildText [buildLines $ prolog (show filename),
                                      buildText funIRs,
                                      buildLines epilog]
 
-type GenS = (T.Text, Int, TypeEnv, Map.Map Abs.Ident String)
--- (code generated, num of fresh variable, type env, Map for global string literals)
 
 getFresh :: GenM Int
 getFresh = do
@@ -100,97 +98,39 @@ getFresh = do
   return num
 
 
-data Loc = LocReg { _n :: Integer } | LocMem { _n :: Integer}
 
-type GenE = Map.Map Abs.Ident Loc
+type GenE = Map.Map Abs.Ident LLVMTypeVal
+type GenS = ([Instr], Int, TypeEnv, Map.Map Abs.Ident String)
+-- (code generated, num of fresh variable, type env, Map for global string literals)
+
 
 type GenM = ReaderT GenE (StateT GenS (Except T.Text))
 
 
-data LLVMType =
-  TInt |
-  TBool |
-  TVoid |
-  TStr |
-  TArr Int LLVMType |
-  TFun LLVMType [LLVMType] |
-  TPtr LLVMType |
-  TLabel
-  deriving (Eq, Ord)
-
-instance Show LLVMType where
-  show t = case t of
-    TInt -> "i32"
-    TBool -> "i8"
-    TVoid -> "TODO"
-    TStr -> "i8*TODO"
-    TPtr t -> (show t) ++ "*"
-    TLabel -> "labelTODO"
-    TArr num t -> "[" ++ (show num) ++ ", " ++ (show t) ++ "]"
-    TFun ret args -> "TODO"
-
-data LLVMVal = VInt Int
-             | VBool Bool
-             | VVoid
-             | VGlobStr Int
-             | VLabel Int
-             | VReg Int
-             | VNull
-             deriving (Eq, Ord)
-
-instance Show LLVMVal where
-  show val = case val of
-    VInt n -> show n
-    VBool b -> if b == True then show 1 else show 0
-    VVoid -> "VOID TODO"
-    VGlobStr n -> "@str." ++ show n
-    VLabel n -> "TODO"
-    VReg n -> "%R." ++ show n
-    VNull -> "NULL TODO"
-
-type LLVMTypeVal = (LLVMType, LLVMVal)
-
 data Instr =
-  GlobStrDecl LLVMTypeVal String
+  GlobStrDecl Integer String
   | FunEntry String LLVMType
   | Ret LLVMTypeVal
   | FunEnd
   | Bin
 
-data AddOp = Plus | Minus
-  deriving (Eq, Ord, Read)
-
-instance Show AddOp where
-  show s = case s of
-    Plus -> "add"
-    Minus -> "sub"
-
-data MulOp = Times | Div | Mod
-  deriving (Eq, Ord, Read)
+instance Show Instr where
+  show i = case i of
+    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant"
+      ++ s ++ "\\00\""
 
 
-instance Show MulOp where
-  show s = case s of
-    Times -> "mul"
-    Div -> "sdiv"
-    Mod -> "srem"
+getVar :: Abs.Ident -> GenM LLVMTypeVal
+getVar id = do
+  m <- ask
+  return $ m Map.! id
 
-data RelOp = LTH | LE | GTH | GE | EQU | NE
-  deriving (Eq, Ord, Read)
-
-
-instance Show RelOp where
-  show s = case s of
-    LTH -> "slt"
-    LE  -> "sle"
-    GTH -> "sgt"
-    GE  -> "sge"
-    EQU -> "eq"
-    NE  -> "ne"
-
-emitExp :: Abs.Expr -> GenM (Either Integer (T.Text, Loc))
-emitExp e = case e of
-  Abs.EVar id -> undefined
+genExp :: Abs.Expr -> GenM LLVMTypeVal
+genExp e = case e of
+  Abs.EVar id -> getVar id
+  Abs.ELitInt n -> return (TInt, VInt n)
+  Abs.ELitTrue -> return (TBool, VBool True)
+  Abs.ELitFalse -> return (TBool, VBool False)
   _ -> undefined
 
 
@@ -200,11 +140,11 @@ t0 = (Map.empty, Map.empty)
 
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp p = do
-  let funCode = map T.pack []
+  let funCode = map T.pack [] -- TODO
   return $ buildIR fp funCode
 
 runGenM :: Abs.Program -> GenM a -> Except T.Text a
-runGenM p comp = evalStateT (runReaderT comp Map.empty) (T.empty, 0, tenv, Map.empty)
+runGenM p comp = evalStateT (runReaderT comp Map.empty) ([], 0, tenv, Map.empty)
   where tenv = execState (createTypeEnv p) t0
   
 runBackend :: FilePath -> Abs.Program -> Either T.Text T.Text

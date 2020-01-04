@@ -8,7 +8,7 @@
 module Frontend where
 
 import AbsLatte
-import Types
+import qualified Types as Ts 
 import ParLatte
 import SkelLatte
 import PrintLatte
@@ -342,10 +342,10 @@ properArgumentNumberCalls (Program topDefs) = do
 
 
 type FunType = (Type, [Type]) -- return, args
-type TypeCheckEnv = (Location, Map.Map Ident FunType, Map.Map Ident Type)
+type TypeCheckEnv = (Ts.Location, Map.Map Ident FunType, Map.Map Ident Type)
 
 
-errorTypecheck :: Location -> Maybe Expr -> Type -> Type -> T.Text
+errorTypecheck :: Ts.Location -> Maybe Expr -> Type -> Type -> T.Text
 errorTypecheck loc ee actual shouldbe = case ee of
   Just e -> T.pack $ printf "%s type mismatch in expression %s (got %s, should be %s)" (show loc) (show e) (show actual) (show shouldbe)
   Nothing -> T.pack $ printf "%s type mismatch (got %s, should be %s)" (show loc) (show actual) (show shouldbe)
@@ -389,14 +389,14 @@ typeCheckBlock (Block (s:stmts)) = do
     Ret e -> do
       t <- inferType e
       case loc of
-        FunName id -> do
+        Ts.FunName id -> do
           let (tt, _) = fenv Map.! id
           when (t /= tt) $ throwError $ T.pack $ printf "error in %s: return type mismatch (got %s, should be %s)" (show loc) (show t) (show tt)
         _ -> error "NOT IMPLEMENTED"
       typeCheckBlock (Block stmts)
     VRet -> do
       case loc of
-        FunName id -> do
+        Ts.FunName id -> do
           let (tt, _) = fenv Map.! id
           when (Void /= tt) $ throwError $ T.pack $ printf "error in %s: return type mismatch (got %s, should be %s)" (show loc) (show Void) (show tt)
         _ -> error "NOT IMPLEMENTED"
@@ -424,7 +424,7 @@ typeCheckBlock (Block (s:stmts)) = do
 
 typeCheckTopDef :: TopDef -> EnvM TypeCheckEnv ()
 typeCheckTopDef (FnDef t id args b) = do
-  local (\(_, f, _) -> (FunName id, f, v)) (typeCheckBlock b) where
+  local (\(_, f, _) -> (Ts.FunName id, f, v)) (typeCheckBlock b) where
     v = Map.fromList $ map (\(Arg t id) -> (id, t)) args
 
 
@@ -511,6 +511,6 @@ checkAll tree = do
   resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
   typeCheck <- runReaderT
     (typeCheck tree)
-    (FunName (Ident "dummy"), Map.empty, Map.empty)
+    (Ts.FunName (Ident "dummy"), Map.empty, Map.empty)
   return ()
   
