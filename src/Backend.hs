@@ -96,12 +96,31 @@ genExp e = case e of
     let tarr = (TArr (toInteger (1 + length s)) TChar) in emit $ GetElemPtr (VReg fresh) tarr [(TPtr tarr, glob),
                                                         (TInt, VInt 0),
                                                         (TInt, VInt 0)]
-    return (TPtr Tchar, VReg fresh)
-  Abs.Neg e -> genExp $ EAdd (ELitInt 0) Minus e
+    return (TPtr TChar, VReg fresh)
+  Abs.Neg e -> genExp $ Abs.EAdd (Abs.ELitInt 0) Abs.Minus e
   Abs.Not e -> do
     (t,v) <- genExp e
     case v of
-      VBool True -> TODO 
+      VBool True -> return (TBool, VBool False)
+      VBool False -> return (TBool, VBool True)
+      VReg n -> do
+        fresh <- getFresh
+        emit $ Cmp (VReg fresh) NE TBool (VReg n) (VInt 0)
+        return (TBool, VReg fresh)
+  Abs.EMul e1 _op e2 -> do
+    (t1,v1) <- genExp e1
+    (t2,v2) <- genExp e2
+    case (v1,v2) of
+      (VInt n, VInt m) -> return (TInt, VInt $ n + m)
+      (VReg n, VInt m) -> do
+        fresh <- getFresh
+        let op = case _op of
+              Abs.Times -> Times
+              Abs.Div -> Div
+              Abs.Mod -> Mod
+        emit $ Bin (VReg fresh) op TInt v1 v2
+        return (TInt, VReg fresh)
+    
   _ -> undefined
 
 
@@ -110,7 +129,7 @@ genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
 emitGlobalStrDecls :: GenM ()
 emitGlobalStrDecls = do
   (ins,n,m) <- get
-  let ins2 = ins ++ (map genStrDecl $ Map.toList m)
+  let ins2 = ins ++ (reverse $ map genStrDecl $ Map.toList m)
   put (ins2,n,m)
 
 emit :: Instr -> GenM ()

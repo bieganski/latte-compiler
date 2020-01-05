@@ -14,29 +14,23 @@ instance Show Location where
 
 
 
-
-
-data AddOp = Plus | Minus
+data BinOp = Plus
+  | Minus
+  | Times
+  | Div
+  | Mod
   deriving (Eq, Ord, Read)
 
-instance Show AddOp where
+instance Show BinOp where
   show s = case s of
     Plus -> "add"
     Minus -> "sub"
-
-data MulOp = Times | Div | Mod
-  deriving (Eq, Ord, Read)
-
-
-instance Show MulOp where
-  show s = case s of
     Times -> "mul"
     Div -> "sdiv"
     Mod -> "srem"
-
+    
 data RelOp = LTH | LE | GTH | GE | EQU | NE
   deriving (Eq, Ord, Read)
-
 
 instance Show RelOp where
   show s = case s of
@@ -84,7 +78,7 @@ data LLVMVal = VDummy
 instance Show LLVMVal where
   show val = case val of
     VInt n -> show n
-    VBool b -> if b == True then show 1 else show 0
+    VBool b -> if b == True then "true" else "false"
     VVoid -> "VOID TODO"
     VGlobStr n -> "@str." ++ show n
     VLabel n -> "TODO"
@@ -99,14 +93,17 @@ data Instr =
   | FunEntry String LLVMType
   | Ret LLVMTypeVal
   | FunEnd
-  | Bin
+  | Bin LLVMVal BinOp LLVMType LLVMVal LLVMVal
+  | Cmp LLVMVal RelOp LLVMType LLVMVal LLVMVal
   | FunCall LLVMVal LLVMType [LLVMTypeVal]
   | GetElemPtr LLVMVal LLVMType [LLVMTypeVal]
 
 instance Show Instr where
   show i = case i of
-    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant"
-      ++ s ++ "\\00\""
+    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant" ++ s ++ "\\00\""
+    Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
+    Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
+      
 
 
 
