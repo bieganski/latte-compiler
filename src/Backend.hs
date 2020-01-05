@@ -76,6 +76,18 @@ getFunType id = do
 
 debug = (TInt, VInt 2137)
 
+
+addGlobStr :: String -> GenM LLVMVal
+addGlobStr s = do
+  (ins,n,m) <- get
+  let glob = VGlobStr $ toInteger $ Map.size m
+  case take 1 $ Map.toList $ Map.filter (==s) m of
+    [] -> do
+      put (ins,n, Map.insert glob s m)
+      return $ VGlobStr $ toInteger $ Map.size m
+    [(VGlobStr num, _)] -> return $ VGlobStr num 
+
+
 genExp :: Abs.Expr -> GenM LLVMTypeVal
 genExp e = case e of
   Abs.EVar id -> getVar id
@@ -89,14 +101,10 @@ genExp e = case e of
     emit $ FunCall (VReg fresh) ret tvs
     return (ret, VReg fresh)
   Abs.EString s -> do
-    (ins,n,m) <- get -- global strings map
-    let glob = VGlobStr $ toInteger $ Map.size m -- numbering strings from zero
-    put (ins,n, Map.insert glob s m)
-    fresh <- getFresh
-    let tarr = (TArr (toInteger (1 + length s)) TChar) in emit $ GetElemPtr (VReg fresh) tarr [(TPtr tarr, glob),
-                                                        (TInt, VInt 0),
-                                                        (TInt, VInt 0)]
-    return (TPtr TChar, VReg fresh)
+    v@(VGlobStr num) <- addGlobStr s
+    let tarr = (TArr (toInteger (1 + length s)) TChar) in
+      emit $ GetElemPtr (VReg num) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
+    return (TPtr TChar, v)
   Abs.Neg e -> genExp $ Abs.EAdd (Abs.ELitInt 0) Abs.Minus e
   Abs.Not e -> do
     (t,v) <- genExp e
@@ -121,7 +129,7 @@ genExp e = case e of
         emit $ Bin (VReg fresh) op TInt v1 v2
         return (TInt, VReg fresh)
     
-  _ -> undefined
+  _ -> error "not implemented exp"
 
 
 genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
@@ -137,6 +145,48 @@ emit i = do
   (ins,n,m) <- get
   put (i:ins,n,m)
 
+-- STATEMENTS GENERATION -------------
+
+mapType :: Abs.Type -> LLVMType
+mapType t = case t of
+        Abs.Int -> TInt
+        Abs.Str -> TPtr TChar
+        Abs.Bool -> TBool
+        _ -> error "internal error mapType"
+
+defaultVal :: LLVMType -> LLVMVal
+defaultVal t = case t of
+  TInt -> VInt 0
+  TPtr TChar -> VGlobStr 0
+  TBool -> VBool False
+  TVoid -> VVoid
+
+declChangeEnv :: GenE -> (Abs.Type, Abs.Item) -> GenM GenE
+declChangeEnv (fenv,venv) (t, (Abs.NoInit id)) = do
+  let val = defaultVal $ mapType t 
+  return (fenv, Map.insert id (mapType t, val) venv)
+declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
+  let t = mapType _t 
+  (_, v) <- genExp e
+  return (fenv, Map.insert id (t, v) venv)
+
+
+genStmt :: Abs.Block -> GenM ()
+genStmt (Abs.Block []) = return ()
+genStmt (Abs.Block (s:ss)) = do
+  let comp = genStmt (Abs.Block ss)
+  case s of
+    Abs.Empty -> comp
+    Abs.BStmt b -> do
+      genStmt b
+      comp
+    Abs.Decl t items -> do
+      env <- ask
+      env' <- foldM declChangeEnv env $ zip (repeat t) items
+      local (const env') comp
+    _ -> error "not implemented stmt"
+
+
 t0 :: Abs.Program -> FuncEnv
 t0 (Abs.Program topDefs) = Map.fromList $ map f topDefs  where
   f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
@@ -146,7 +196,7 @@ e0 :: Abs.Program -> GenE
 e0 p = (t0 p, Map.empty)
       
 s0 :: GenS
-s0 = ([], 1, Map.empty)
+s0 = ([], 1, Map.singleton (VGlobStr 0) "")
 
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp p = do
