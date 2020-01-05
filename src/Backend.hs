@@ -175,16 +175,47 @@ genStmt :: Abs.Block -> GenM ()
 genStmt (Abs.Block []) = return ()
 genStmt (Abs.Block (s:ss)) = do
   let comp = genStmt (Abs.Block ss)
+  env@(fenv, venv) <- ask
   case s of
-    Abs.Empty -> comp
+    Abs.Empty -> do
+      comp
     Abs.BStmt b -> do
       genStmt b
       comp
     Abs.Decl t items -> do
-      env <- ask
       env' <- foldM declChangeEnv env $ zip (repeat t) items
       local (const env') comp
+    Abs.Ass id e -> do
+      (t,v) <- genExp e
+      let venv' = Map.insert id (t,v) venv
+      local (const (fenv, venv')) comp
+    Abs.Incr id -> do
+      (t, val) <- doAdd id 1
+      let venv' = Map.insert id (t, val) venv
+      local (const (fenv, venv')) comp
+    Abs.Decr id -> do
+      (t, val) <- doAdd id (-1)
+      let venv' = Map.insert id (t, val) venv
+      local (const (fenv, venv')) comp
+    Abs.Ret e -> do
+      (t, v) <- genExp e
+      emit $ Ret (t, v)
+    Abs.VRet -> do
+      emit $ Ret (TVoid, VDummy)
     _ -> error "not implemented stmt"
+
+
+doAdd :: Abs.Ident -> Integer -> GenM LLVMTypeVal
+doAdd id x = do
+  (fenv,venv) <- ask
+  let (t, v) = venv Map.! id
+  case v of
+    VInt n -> do
+      return (t, VInt $ n + x)
+    VReg n -> do
+      f <- getFresh
+      emit $ Bin (VReg f) Plus TInt (VReg n) (VInt x)
+      return (t, (VReg n))
 
 
 t0 :: Abs.Program -> FuncEnv

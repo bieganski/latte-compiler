@@ -14,7 +14,8 @@ instance Show Location where
 
 
 
-data BinOp = Plus
+data BinOp =
+  Plus
   | Minus
   | Times
   | Div
@@ -103,6 +104,7 @@ instance Show Instr where
     GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant" ++ s ++ "\\00\", " ++ "align 1" 
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
+    Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
       
 
 
