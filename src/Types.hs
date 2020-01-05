@@ -53,8 +53,9 @@ data LLVMType =
   TInt |
   TBool |
   TVoid |
-  TArr Int LLVMType |
+  TArr Integer LLVMType |
   TChar |
+  TString |
   TFun LLVMType [LLVMType] |
   TPtr LLVMType |
   TLabel
@@ -92,5 +93,20 @@ instance Show LLVMVal where
 
 
 type LLVMTypeVal = (LLVMType, LLVMVal)
+ 
+data Instr =
+  GlobStrDecl LLVMVal String
+  | FunEntry String LLVMType
+  | Ret LLVMTypeVal
+  | FunEnd
+  | Bin
+  | FunCall LLVMVal LLVMType [LLVMTypeVal]
+  | GetElemPtr LLVMVal LLVMType [LLVMTypeVal]
+
+instance Show Instr where
+  show i = case i of
+    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant"
+      ++ s ++ "\\00\""
+
 
 

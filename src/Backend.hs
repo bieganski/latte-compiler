@@ -1,11 +1,14 @@
-
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Backend where
 
 import qualified AbsLatte as Abs
-import Types
 
+import Types
+import Utils
 import System.FilePath
 
 import Frontend(itemIdent)
@@ -13,14 +16,13 @@ import Frontend(itemIdent)
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
-
+import Control.Monad.Fail
 import Control.Lens
 
 import qualified Data.Map as Map
 import qualified Data.Text as T
 
 import Debug.Trace
-import Utils
 
 
 
@@ -34,10 +36,10 @@ absTypeToLLVM t = case t of
             Abs.Void -> TVoid
             _ -> error "not implemented (absTypeToLLVM)"
 
-getFresh :: GenM Int
+getFresh :: GenM Integer
 getFresh = do
   (_,num,_) <- get
-  modify \(c, num, m) -> (c, num+1, m)
+  modify \(c, n, m) -> (c, n+1, m)
   return num
 
 
@@ -47,8 +49,8 @@ type GenE = (FuncEnv,
 -- function env and variable env
 
 type GenS = ([Instr],
-             Int,
-             Map.Map Abs.Ident String)
+             Integer,
+             Map.Map LLVMVal String)
 -- (code generated,
 --  num of fresh variable,
 --  Map for global string literals)
@@ -57,19 +59,9 @@ type GenS = ([Instr],
 type GenM = ReaderT GenE (StateT GenS (Except T.Text))
 
 
-data Instr =
-  GlobStrDecl Integer String
-  | FunEntry String LLVMType
-  | Ret LLVMTypeVal
-  | FunEnd
-  | Bin
-  | FunCall LLVMVal LLVMType [LLVMTypeVal]
-
-instance Show Instr where
-  show i = case i of
-    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant"
-      ++ s ++ "\\00\""
-
+instance MonadFail Identity where
+    fail :: String -> m a
+    fail = error -- return 1 -- throwError "Internal error: PatternMatching failed!?"
 
 getVar :: Abs.Ident -> GenM LLVMTypeVal
 getVar id = do
@@ -91,11 +83,40 @@ genExp e = case e of
   Abs.ELitTrue -> return (TBool, VBool True)
   Abs.ELitFalse -> return (TBool, VBool False)
   Abs.EApp id exps -> do
-    vals <- forM exps genExp
-    return $ debug
+    tvs <- forM exps genExp
+    TFun ret args <- getFunType id
+    fresh <- getFresh
+    emit $ FunCall (VReg fresh) ret tvs
+    return (ret, VReg fresh)
+  Abs.EString s -> do
+    (ins,n,m) <- get -- global strings map
+    let glob = VGlobStr $ toInteger $ Map.size m -- numbering strings from zero
+    put (ins,n, Map.insert glob s m)
+    fresh <- getFresh
+    let tarr = (TArr (toInteger (1 + length s)) TChar) in emit $ GetElemPtr (VReg fresh) tarr [(TPtr tarr, glob),
+                                                        (TInt, VInt 0),
+                                                        (TInt, VInt 0)]
+    return (TPtr Tchar, VReg fresh)
+  Abs.Neg e -> genExp $ EAdd (ELitInt 0) Minus e
+  Abs.Not e -> do
+    (t,v) <- genExp e
+    case v of
+      VBool True -> TODO 
   _ -> undefined
 
 
+genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
+
+emitGlobalStrDecls :: GenM ()
+emitGlobalStrDecls = do
+  (ins,n,m) <- get
+  let ins2 = ins ++ (map genStrDecl $ Map.toList m)
+  put (ins2,n,m)
+
+emit :: Instr -> GenM ()
+emit i = do
+  (ins,n,m) <- get
+  put (i:ins,n,m)
 
 t0 :: Abs.Program -> FuncEnv
 t0 (Abs.Program topDefs) = Map.fromList $ map f topDefs  where
