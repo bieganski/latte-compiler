@@ -11,7 +11,7 @@ newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
 data Program = Program [TopDef]
   deriving (Eq, Ord, Show, Read)
 
-data TopDef = FnDef Type Ident [Arg] Block
+data TopDef = FnDef {_ft :: Type, _fid :: Ident, _as :: [Arg], _bl :: Block }
   deriving (Eq, Ord, Show, Read)
 
 data Arg = Arg {_t :: Type, _aid :: Ident}
@@ -67,6 +67,7 @@ data RelOp = LTH | LE | GTH | GE | EQU | NE
   deriving (Eq, Ord, Show, Read)
 
 
+makeLenses ''TopDef
 makeLenses ''Item
 makeLenses ''Stmt
 makeLenses ''Expr

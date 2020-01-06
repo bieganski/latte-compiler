@@ -152,6 +152,7 @@ mapType t = case t of
         Abs.Int -> TInt
         Abs.Str -> TPtr TChar
         Abs.Bool -> TBool
+        Abs.Void -> TVoid
         _ -> error "internal error mapType"
 
 defaultVal :: LLVMType -> LLVMVal
@@ -219,7 +220,7 @@ doAdd id x = do
 
 
 t0 :: Abs.Program -> FuncEnv
-t0 (Abs.Program topDefs) = Map.fromList $ map f topDefs  where
+t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f topDefs  where
   f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
                                        
 
@@ -229,21 +230,44 @@ e0 p = (t0 p, Map.empty)
 s0 :: GenS
 s0 = ([], 1, Map.singleton (VGlobStr 0) "")
 
-emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
-emitProgramIR fp p = do
-  let funCode = map T.pack [] -- TODO
-  return $ buildIR fp funCode
-
+tstr = TPtr TChar
+  
+builtInFunctions = Map.fromList
+  [(Abs.Ident "printString", TFun TVoid [tstr]),
+   (Abs.Ident "printInt",    TFun TVoid [TInt]),
+   (Abs.Ident "readInt",     TFun TInt []),
+   (Abs.Ident "readString",  TFun tstr []),
+   (Abs.Ident "error",       TFun TVoid []),
+   (Abs.Ident "_strlen",     TFun TInt [tstr]),
+   (Abs.Ident "_malloc",     TFun tstr [TInt]),
+   (Abs.Ident "_strcat",     TFun tstr [TString, TString]),
+   (Abs.Ident "_strcmp",     TFun TInt [TString, TString]),
+   (Abs.Ident "_strcpy",     TFun tstr [TString, TString])]
 
  
-buildIR :: FilePath -> [T.Text] -> T.Text
-buildIR filename funIRs = buildText [buildLines $ prolog (show filename),
-                                     buildText funIRs,
-                                     buildLines epilog]
+buildIR :: FilePath -> T.Text -> T.Text
+buildIR filename content = buildText [buildLines $ prolog (show filename),
+                                      content,
+                                      buildLines epilog]
 
 
 runGenM :: Abs.Program -> GenM a -> Except T.Text a
 runGenM p comp = evalStateT (runReaderT comp (e0 p)) s0
+
+emitTopDefIR :: Abs.TopDef -> GenM ()
+emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
+  emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
+  genStmt block
+  emit $ FunEnd
+  return ()
+  
+
+emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
+emitProgramIR fp (Abs.Program topDefs) = do
+  forM_ topDefs emitTopDefIR
+  (ins,_,_) <- get
+  let content = buildLines $ map show $ reverse ins
+  return $ buildIR fp content
   
 runBackend :: FilePath -> Abs.Program -> Either T.Text T.Text
 runBackend fp p = runExcept $ runGenM p (emitProgramIR fp p)

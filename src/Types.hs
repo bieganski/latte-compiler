@@ -1,6 +1,7 @@
 module Types where
 
 import qualified AbsLatte as Abs
+import Utils
 
 data Location =
   FunName Abs.Ident | 
@@ -101,10 +102,13 @@ data Instr =
 
 instance Show Instr where
   show i = case i of
+    FunEntry s (TFun ret args) -> "define " ++ (show ret) ++ "@" ++ s ++ "(" ++ (buildCommaString (map show args)) ++ ") {"
+    FunEnd -> "}"
     GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant" ++ s ++ "\\00\", " ++ "align 1" 
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
     Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
+    GetElemPtr r t tvs -> "%" ++ (show r) ++ " = getelementptr" ++ (show t) ++ ", " ++ (buildCommaString (map show tvs)) 
       
 
 
