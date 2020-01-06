@@ -100,6 +100,8 @@ data Instr =
   | Declare String LLVMType
   | BrCond LLVMTypeVal LLVMTypeVal LLVMTypeVal
   | Br LLVMTypeVal
+  | Phi LLVMVal LLVMType [(LLVMVal, LLVMVal)]
+  | Comment String
   deriving (Eq, Ord)
 
 instance Show Instr where
@@ -114,8 +116,14 @@ instance Show Instr where
     FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
     FunCall VVoid TVoid id args -> "call " ++ (show VVoid) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv args)) ++ ")"
     Declare funName (TFun ret args) -> "declare " ++ (show ret) ++ " @" ++ funName ++ "(" ++ (buildCommaString (map show args)) ++ ")"
-    BrCond a@(condt, condv) b@(TLabel, l1V) c@(TLabel, l2v) ->
-      "br " ++ (buildCommaString (map showtv [a,b,c]))
+    BrCond a@(condt, condv) b@(TLabel, l1V) c@(TLabel, l2v) -> "br " ++ (buildCommaString (map showtv [a,b,c]))
+    Br (t,v) -> "br " ++ (show t) ++ " " ++ (show v)
+    Phi v t lst -> (show v) ++ " = phi " ++ (show t) ++ " " ++ (buildCommaString (map phiShow lst))
+    Comment s -> "; " ++ s
     
 showtv :: LLVMTypeVal -> String
 showtv (a,b) = (show a) ++ " " ++ (show b)
+
+
+phiShow :: (LLVMVal,LLVMVal) -> String
+phiShow (v, l@(VLabel n)) = "[" ++ (show v) ++ ", " ++ show l ++ "]"

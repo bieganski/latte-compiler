@@ -52,7 +52,7 @@ type GenE = (FuncEnv,
 type GenS = ([Instr],
              Integer,
              Map.Map LLVMVal String,
-             Int)
+             Integer)
 -- (code generated,
 -- num of fresh variable,
 -- Map for global string literals)
@@ -186,29 +186,37 @@ genExp e = case e of
     case v1 of
       VBool True -> genExp e2
       VBool False -> return (TBool, VBool False)
-      VReg _ -> do -- lazy
+      VReg _ -> jumpAndOr e2 v1 NE        
+  Abs.EOr e1 e2 -> do
+    (_, v1) <- genExp e1
+    case v1 of
+      VBool True -> return (TBool, VBool True)
+      VBool False -> genExp e2
+      VReg _ -> jumpAndOr e2 v1 EQU
+      
+
+jumpAndOr :: Abs.Expr -> LLVMVal -> RelOp -> GenM LLVMTypeVal
+jumpAndOr e2 v1 op = do
         f <- getFresh
-        emit $ Cmp (VReg f) NE TBool v1 (VInt 0)
-        let comm = getCommonVars e1 e2 -- will be generating phi for them
+        emit $ Cmp (VReg f) op TBool v1 (VInt 0)
         (ins,n,m,blockNum) <- get
-        put ([],n,m,blockNum)
-        branchTrue <- getFresh
-        -- branchFalse <- getFresh // we cannot do that, because register numbers must be +1 each
-        let i = \falseReg -> BrCond (TBool, VReg f) (TLabel, VLabel branchTrue) (TLabel, VLabel falseReg)
+        branch1 <- getFresh
+        -- branch2 <- getFresh // we cannot do that, because register numbers must be +1 each
+        let cond = \b2 -> BrCond (TBool, VReg f) (TLabel, VLabel branch1) (TLabel, VLabel b2)
+        put ([],n+1,m,branch1) -- entering new block
+        emit $ Comment $ "im in block " ++ (show branch1)
         (_, v2) <- genExp e2 -- during that, new instructions were added
-        branchFalse <- getFresh
-        (e2ins,_,_,_) <- get
-        let allIns = concat [i branchFalse,
+        (e2ins,_,_,r) <- get -- these are new ones (cause we started with [] list)
+        branch2 <- getFresh
+        let allIns = concat [[cond branch2],
                              reverse e2ins,
-                             Br (TLabel, VLabel branchFalse)] -- in proper order
-        -- TODO tutaj insert phi nodes
+                             [Br (TLabel, VLabel branch2)]] -- in proper order
         (_,n,m,b) <- get
-        put (diff ++ [i branchFalse] ++_ins1, n,m,b) 
-        
-        return debug
-        
-    
-  _ -> error "not implemented exp"
+        put (reverse $ (reverse ins) ++ allIns,n,m,branch2)
+        emit $ Comment $ "im in block " ++ (show branch2)
+        res <- getFresh
+        emit $ Phi (VReg res) TBool [(v1, VLabel blockNum), (v2, VLabel r)]
+        return (TBool, VReg res)
 
 
 tstr = TPtr TChar
@@ -377,7 +385,7 @@ emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
   let comp = genStmt block >> emit FunEnd
   (ins,_,m,_) <- get
-  put (ins, toInteger (1 + (length args)), m, 1)
+  put (ins, toInteger (1 + (length args)), m, toInteger $ length args)
   flip local comp $ \(fenv, _) -> (fenv, createFunctionEnv args)
   
 
