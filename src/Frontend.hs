@@ -479,8 +479,7 @@ inferType e = do
       t1 <- inferType e1
       t2 <- inferType e2
       case (t1,t2,relOp) of
-        (Int,Int,_) -> return Int
-        (Str,Str,_) -> return Str
+        (Int,Int,_) -> return Bool
         _ -> throwError $ T.pack $ printf "error in %s: type mismatch during comparision (%s and %s) in %s" (show loc) (show t1) (show t2) (show e)
     EAnd e1 e2 -> do
       t1 <- inferType e1

@@ -130,12 +130,38 @@ genExp e = case e of
         fresh <- getFresh
         let op = case _op of
               Abs.Times -> Times
-              Abs.Div -> Div
-              Abs.Mod -> Mod
+              Abs.Div   -> Div
+              Abs.Mod   -> Mod
         emit $ Bin (VReg fresh) op TInt v1 v2
         return (TInt, VReg fresh)
-    
+  Abs.ERel e1 _op e2 -> do
+    (t1,v1) <- genExp e1
+    (t2,v2) <- genExp e2
+    let op = case _op of
+          Abs.LTH -> LTH
+          Abs.LE  -> LE
+          Abs.GTH -> GTH
+          Abs.GE  -> GE
+          Abs.EQU -> EQU
+          Abs.NE  -> NE
+    case (v1,v2) of
+      (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
+      _ -> do
+        f <- getFresh
+        emit $ Cmp (VReg f) op TInt v1 v2
+        return (TBool, (VReg f))
   _ -> error "not implemented exp"
+
+
+computeRelOp :: LLVMVal -> LLVMVal -> RelOp -> LLVMTypeVal
+computeRelOp (VInt v1) (VInt v2) op = let v = case op of
+                                           LTH -> v1 < v2
+                                           LE -> v1 <= v2
+                                           GTH -> v1 > v2
+                                           GE -> v1 >= v2
+                                           EQU -> v1 == v2
+                                           NE -> v1 /= v2
+                                     in (TBool, VBool v)
 
 
 genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
@@ -265,12 +291,17 @@ buildIR filename content = buildText [buildLines $ prolog (show filename),
 runGenM :: Abs.Program -> GenM a -> Except T.Text a
 runGenM p comp = evalStateT (runReaderT comp (e0 p)) s0
 
+createFunctionEnv :: [Abs.Arg] -> Map.Map Abs.Ident LLVMTypeVal
+createFunctionEnv args = Map.fromList $ map f (zip [0..] args)
+  where f = \(num, (Abs.Arg t id)) -> (id, (mapType t,VReg num))
+
 emitTopDefIR :: Abs.TopDef -> GenM ()
 emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
-  genStmt block
-  emit $ FunEnd
-  return ()
+  let comp = genStmt block >> emit FunEnd
+  (ins,_,m) <- get
+  put (ins, toInteger (1 + (length args)), m)
+  flip local comp $ \(fenv, _) -> (fenv, createFunctionEnv args)
   
 
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text

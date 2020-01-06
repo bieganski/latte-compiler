@@ -41,7 +41,7 @@ run v fp s = do
   let outFile = dropExtension fp <.> "ll"
   case ts of
            Bad s    -> do
-             -- TODO putStrLn "ERROR"
+             putStrLn $ "ERROR\n" ++ s
              writeFile outFile "ERROR\n"
            Ok  tree -> do
              res <- runExceptT $ checkAll tree

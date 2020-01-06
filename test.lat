@@ -1,3 +1,10 @@
+
+boolean f(int a) {
+    int b = 1;
+    return a < b;
+}
+
+
 int main() {
     string aa = "utkaj";
     int a = readInt();

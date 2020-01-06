@@ -44,7 +44,6 @@ instance Show RelOp where
     NE  -> "ne"
 
 
-
 data LLVMType =
   TInt |
   TBool |
@@ -59,7 +58,7 @@ data LLVMType =
 instance Show LLVMType where
   show t = case t of
     TInt -> "i32"
-    TBool -> "i8"
+    TBool -> "i1"
     TVoid -> "void"
     TChar -> "i8"
     TPtr t -> (show t) ++ "*"
@@ -83,7 +82,7 @@ instance Show LLVMVal where
     VVoid -> "void"
     VGlobStr n -> "@str." ++ show n
     VLabel n -> "TODO"
-    VReg n -> "%R." ++ show n
+    VReg n -> "%" ++ show n
     VDummy -> "TODO nic"
 
 
@@ -106,7 +105,7 @@ instance Show Instr where
     FunEnd -> "}"
     GlobStrDecl n s -> (show n) ++ " = private unnamed_addr constant " ++ (show (TArr (toInteger (1 + (length s))) TChar)) ++ " c\"" ++ s ++ "\\00\", align 1" 
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
-    Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
+    Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
     GetElemPtr r t tvs -> (show r) ++ " = getelementptr " ++ (show t) ++ ", " ++ (buildCommaString (map showtv tvs))
     FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ "@" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
