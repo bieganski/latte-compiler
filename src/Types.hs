@@ -97,7 +97,7 @@ data Instr =
   | FunEnd
   | Bin LLVMVal BinOp LLVMType LLVMVal LLVMVal
   | Cmp LLVMVal RelOp LLVMType LLVMVal LLVMVal
-  | FunCall LLVMVal LLVMType [LLVMTypeVal]
+  | FunCall LLVMVal LLVMType String [LLVMTypeVal]
   | GetElemPtr LLVMVal LLVMType [LLVMTypeVal]
 
 instance Show Instr where
@@ -108,7 +108,8 @@ instance Show Instr where
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
     Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
-    GetElemPtr r t tvs -> "%" ++ (show r) ++ " = getelementptr" ++ (show t) ++ ", " ++ (buildCommaString (map show tvs)) 
+    GetElemPtr r t tvs -> "%" ++ (show r) ++ " = getelementptr" ++ (show t) ++ ", " ++ (buildCommaString (map show tvs))
+    FunCall r t id args -> (show r) ++ " = call " ++ (show t) ++ "@" ++ id ++ "(" ++ (buildCommaString (map show args)) ++ ")" 
       
 
 

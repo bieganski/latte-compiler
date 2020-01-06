@@ -94,11 +94,11 @@ genExp e = case e of
   Abs.ELitInt n -> return (TInt, VInt n)
   Abs.ELitTrue -> return (TBool, VBool True)
   Abs.ELitFalse -> return (TBool, VBool False)
-  Abs.EApp id exps -> do
+  Abs.EApp id@(Abs.Ident iid) exps -> do
     tvs <- forM exps genExp
     TFun ret args <- getFunType id
     fresh <- getFresh
-    emit $ FunCall (VReg fresh) ret tvs
+    emit $ FunCall (VReg fresh) ret iid tvs
     return (ret, VReg fresh)
   Abs.EString s -> do
     v@(VGlobStr num) <- addGlobStr s
