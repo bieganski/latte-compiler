@@ -11,5 +11,5 @@ then
   fi
 else
   echo "ERROR" 1>&2
-  echo "Couldn't find file '$1'." 1>&2
+  echo "Nie znaleziono pliku'$1'." 1>&2
 fi
