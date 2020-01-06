@@ -62,7 +62,7 @@ instance Show LLVMType where
     TVoid -> "void"
     TChar -> "i8"
     TPtr t -> (show t) ++ "*"
-    TLabel -> "labelTODO"
+    TLabel -> "label"
     TArr num t -> "[" ++ (show num) ++ " x " ++ (show t) ++ "]"
     TFun ret args -> "TODO"
 
@@ -81,7 +81,7 @@ instance Show LLVMVal where
     VBool b -> if b == True then "true" else "false"
     VVoid -> "void"
     VGlobStr n -> "@str." ++ show n
-    VLabel n -> "TODO"
+    VLabel n -> "%" ++ show n
     VReg n -> "%" ++ show n
     VDummy -> "TODO nic"
 
@@ -98,6 +98,9 @@ data Instr =
   | FunCall LLVMVal LLVMType String [LLVMTypeVal]
   | GetElemPtr LLVMVal LLVMType [LLVMTypeVal]
   | Declare String LLVMType
+  | BrCond LLVMTypeVal LLVMTypeVal LLVMTypeVal
+  | Br LLVMTypeVal
+  deriving (Eq, Ord)
 
 instance Show Instr where
   show i = case i of
@@ -111,6 +114,8 @@ instance Show Instr where
     FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
     FunCall VVoid TVoid id args -> "call " ++ (show VVoid) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv args)) ++ ")"
     Declare funName (TFun ret args) -> "declare " ++ (show ret) ++ " @" ++ funName ++ "(" ++ (buildCommaString (map show args)) ++ ")"
+    BrCond a@(condt, condv) b@(TLabel, l1V) c@(TLabel, l2v) ->
+      "br " ++ (buildCommaString (map showtv [a,b,c]))
     
 showtv :: LLVMTypeVal -> String
 showtv (a,b) = (show a) ++ " " ++ (show b)

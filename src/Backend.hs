@@ -10,6 +10,7 @@ import qualified AbsLatte as Abs
 import Types
 import Utils
 import System.FilePath
+import Data.List as L
 
 import Frontend(itemIdent)
 
@@ -21,7 +22,7 @@ import Control.Lens
 
 import qualified Data.Map as Map
 import qualified Data.Text as T
-
+import qualified Data.Set as Set
 import Debug.Trace
 
 
@@ -38,8 +39,8 @@ absTypeToLLVM t = case t of
 
 getFresh :: GenM Integer
 getFresh = do
-  (_,num,_) <- get
-  modify \(c, n, m) -> (c, n+1, m)
+  (_,num,_,_) <- get
+  modify \(c, n, m, b) -> (c, n+1, m, b)
   return num
 
 
@@ -50,11 +51,12 @@ type GenE = (FuncEnv,
 
 type GenS = ([Instr],
              Integer,
-             Map.Map LLVMVal String)
+             Map.Map LLVMVal String,
+             Int)
 -- (code generated,
---  num of fresh variable,
---  Map for global string literals)
-
+-- num of fresh variable,
+-- Map for global string literals)
+-- number of current block
 
 type GenM = ReaderT GenE (StateT GenS (Except T.Text))
 
@@ -79,13 +81,30 @@ debug = (TInt, VInt 2137)
 
 addGlobStr :: String -> GenM LLVMVal
 addGlobStr s = do
-  (ins,n,m) <- get
+  (ins,n,m,b) <- get
   let glob = VGlobStr $ toInteger $ Map.size m
   case take 1 $ Map.toList $ Map.filter (==s) m of
     [] -> do
-      put (ins,n, Map.insert glob s m)
+      put (ins,n,Map.insert glob s m,b)
       return $ VGlobStr $ toInteger $ Map.size m
     [(VGlobStr num, _)] -> return $ VGlobStr num 
+
+
+getExprVars :: Abs.Expr -> Set.Set Abs.Ident
+getExprVars e = case e of
+  Abs.EVar id -> Set.singleton id
+  Abs.EApp _ es -> Set.unions $ map getExprVars es
+  Abs.Neg e -> getExprVars e
+  Abs.Not e -> getExprVars e
+  Abs.EMul e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
+  Abs.EAdd e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
+  Abs.ERel e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
+  Abs.EAnd e1 e2 -> Set.union (getExprVars e1) (getExprVars e2)
+  Abs.EOr e1 e2 -> Set.union (getExprVars e1) (getExprVars e2)
+  _ -> Set.empty
+
+getCommonVars :: Abs.Expr -> Abs.Expr -> Set.Set Abs.Ident
+getCommonVars e1 e2 = Set.intersection (getExprVars e1) (getExprVars e2)
 
 
 genExp :: Abs.Expr -> GenM LLVMTypeVal
@@ -162,12 +181,39 @@ genExp e = case e of
         emit $ Bin (VReg f) op TInt v1 v2
         return (TInt, VReg f)
       (TPtr TChar, TPtr TChar) -> concatStrings (t1,v1) (t2,v2)
+  Abs.EAnd e1 e2 -> do
+    (_, v1) <- genExp e1
+    case v1 of
+      VBool True -> genExp e2
+      VBool False -> return (TBool, VBool False)
+      VReg _ -> do -- lazy
+        f <- getFresh
+        emit $ Cmp (VReg f) NE TBool v1 (VInt 0)
+        let comm = getCommonVars e1 e2 -- will be generating phi for them
+        (ins,n,m,blockNum) <- get
+        put ([],n,m,blockNum)
+        branchTrue <- getFresh
+        -- branchFalse <- getFresh // we cannot do that, because register numbers must be +1 each
+        let i = \falseReg -> BrCond (TBool, VReg f) (TLabel, VLabel branchTrue) (TLabel, VLabel falseReg)
+        (_, v2) <- genExp e2 -- during that, new instructions were added
+        branchFalse <- getFresh
+        (e2ins,_,_,_) <- get
+        let allIns = concat [i branchFalse,
+                             reverse e2ins,
+                             Br (TLabel, VLabel branchFalse)] -- in proper order
+        -- TODO tutaj insert phi nodes
+        (_,n,m,b) <- get
+        put (diff ++ [i branchFalse] ++_ins1, n,m,b) 
+        
+        return debug
+        
+    
   _ -> error "not implemented exp"
 
 
 tstr = TPtr TChar
 
--- http://www.cplusplus.com/reference/cstring/strcpy/
+-- http://www.cplusplus.com/reference/cstring/strcpy/ and /strlen and /strcat 
 concatStrings :: LLVMTypeVal -> LLVMTypeVal -> GenM LLVMTypeVal
 concatStrings (t1, v1) (t2, v2) = do
   len1 <- getFresh
@@ -201,14 +247,14 @@ genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
 
 emitGlobalStrDecls :: GenM ()
 emitGlobalStrDecls = do
-  (ins,n,m) <- get
+  (ins,n,m,b) <- get
   let ins2 = ins ++ (reverse $ map genStrDecl $ Map.toList m)
-  put (ins2,n,m)
+  put (ins2,n,m,b)
 
 emit :: Instr -> GenM ()
 emit i = do
-  (ins,n,m) <- get
-  put (i:ins,n,m)
+  (ins,n,m,b) <- get
+  put (i:ins,n,m,b)
 
 -- STATEMENTS GENERATION -------------
 
@@ -298,7 +344,7 @@ e0 :: Abs.Program -> GenE
 e0 p = (t0 p, Map.empty)
       
 s0 :: GenS
-s0 = ([], 1, Map.singleton (VGlobStr 0) "")
+s0 = ([], 1, Map.singleton (VGlobStr 0) "", 1)
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
@@ -330,8 +376,8 @@ emitTopDefIR :: Abs.TopDef -> GenM ()
 emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
   let comp = genStmt block >> emit FunEnd
-  (ins,_,m) <- get
-  put (ins, toInteger (1 + (length args)), m)
+  (ins,_,m,_) <- get
+  put (ins, toInteger (1 + (length args)), m, 1)
   flip local comp $ \(fenv, _) -> (fenv, createFunctionEnv args)
   
 
@@ -339,7 +385,7 @@ emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp (Abs.Program topDefs) = do
   forM_ topDefs emitTopDefIR
   emitGlobalStrDecls
-  (ins,_,_) <- get
+  (ins,_,_,_) <- get
   let decls = map (\(Abs.Ident a, b) -> Declare a b) $ Map.toList builtInFunctions
   let content = buildLines $ map show $ decls ++ (reverse ins)
   return $ buildIR fp content
