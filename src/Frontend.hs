@@ -260,8 +260,12 @@ onlyDeclaredVarsUsed :: Program -> EnvM [Ident] ()
 onlyDeclaredVarsUsed (Program topDefs) = forM_ topDefs onlyDeclaredVarsUsedTopDef
 
 builtinsArgsNum :: Map.Map Ident Int
-builtinsArgsNum = Map.fromList [(Ident "printInt", 1),
-                            (Ident "readInt",  0)]
+builtinsArgsNum = Map.fromList
+  [(Ident "printInt", 1),
+   (Ident "readInt",  0),
+   (Ident "readString",  0),
+   (Ident "printString",  1),
+   (Ident "error", 0)]
 
 
 argsCheckErrMsg :: Ident -> Stmt -> Ident -> Int -> Int -> T.Text
@@ -503,7 +507,8 @@ checkAll tree = do
   let builtins = Map.fromList [(Ident "readInt", (Int, [])),
                                (Ident "readString", (Str, [])),
                                (Ident "printInt", (Void, [Int])),
-                               (Ident "printString", (Void, [Str]))]
+                               (Ident "printString", (Void, [Str])),
+                               (Ident "error", (Void, []))]
   typeCheck <- runReaderT
     (typeCheck tree)
     (Ts.FunName (Ident "dummy"), builtins, Map.empty)

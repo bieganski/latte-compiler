@@ -6,9 +6,9 @@ boolean f(int a) {
 
 
 int main() {
-    string aa = "utkaj";
-    int a = readInt();
-    int x = readInt();
-    printInt(a*x);
-    return a * x;
+    string a = "utkaj";
+    string b = readString();
+    printString(a + b);
+    printInt (1 + 2);
+    return 0;
 }

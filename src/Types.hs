@@ -108,7 +108,7 @@ instance Show Instr where
     Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
     GetElemPtr r t tvs -> (show r) ++ " = getelementptr " ++ (show t) ++ ", " ++ (buildCommaString (map showtv tvs))
-    FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ "@" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
+    FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
     FunCall VVoid TVoid id args -> "call " ++ (show VVoid) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv args)) ++ ")"
     Declare funName (TFun ret args) -> "declare " ++ (show ret) ++ " @" ++ funName ++ "(" ++ (buildCommaString (map show args)) ++ ")"
     

@@ -61,7 +61,7 @@ type GenM = ReaderT GenE (StateT GenS (Except T.Text))
 
 instance MonadFail Identity where
     fail :: String -> m a
-    fail = error -- return 1 -- throwError "Internal error: PatternMatching failed!?"
+    fail = error
 
 getVar :: Abs.Ident -> GenM LLVMTypeVal
 getVar id = do
@@ -108,9 +108,9 @@ genExp e = case e of
   Abs.EString s -> do
     v@(VGlobStr num) <- addGlobStr s
     f <- getFresh
-    let tarr = (TArr (toInteger (1 + length s)) TChar) in
-      emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
-    return (TPtr TChar, v)
+    let tarr = (TArr (toInteger (1 + length s)) TChar)
+    emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
+    return (tstr, VReg f)
   Abs.Neg e -> genExp $ Abs.EAdd (Abs.ELitInt 0) Abs.Minus e
   Abs.Not e -> do
     (t,v) <- genExp e
@@ -150,8 +150,41 @@ genExp e = case e of
         f <- getFresh
         emit $ Cmp (VReg f) op TInt v1 v2
         return (TBool, (VReg f))
+  Abs.EAdd e1 _op e2 -> do
+    let op = case _op of
+          Abs.Plus -> Plus
+          Abs.Minus -> Minus
+    (t1,v1) <- genExp e1
+    (t2,v2) <- genExp e2
+    case (t1, t2) of
+      (TInt, TInt) -> do
+        f <- getFresh
+        emit $ Bin (VReg f) op TInt v1 v2
+        return (TInt, VReg f)
+      (TPtr TChar, TPtr TChar) -> concatStrings (t1,v1) (t2,v2)
   _ -> error "not implemented exp"
 
+
+tstr = TPtr TChar
+
+-- http://www.cplusplus.com/reference/cstring/strcpy/
+concatStrings :: LLVMTypeVal -> LLVMTypeVal -> GenM LLVMTypeVal
+concatStrings (t1, v1) (t2, v2) = do
+  len1 <- getFresh
+  emit $ FunCall (VReg len1) TInt "_strlen" [(t1, v1)]
+  len2 <- getFresh
+  emit $ FunCall (VReg len2) TInt "_strlen" [(t2, v2)]
+  _len <- getFresh
+  emit $ Bin (VReg _len) Plus TInt (VReg len1) (VReg len2)
+  len <- getFresh
+  emit $ Bin (VReg  len) Plus TInt (VReg _len) (VInt 1)
+  newStr <- getFresh
+  emit $ FunCall (VReg newStr) tstr "_malloc" [(TInt, VReg len)]
+  newStrDup <- getFresh
+  emit $ FunCall (VReg newStrDup) tstr "_strcpy" [(tstr, (VReg newStr)), (t1, v1)]
+  res <- getFresh
+  emit $ FunCall (VReg res) tstr "_strcat" [(tstr, VReg newStrDup), (t2, v2)]
+  return (tstr, VReg newStrDup)
 
 computeRelOp :: LLVMVal -> LLVMVal -> RelOp -> LLVMTypeVal
 computeRelOp (VInt v1) (VInt v2) op = let v = case op of
@@ -266,8 +299,6 @@ e0 p = (t0 p, Map.empty)
       
 s0 :: GenS
 s0 = ([], 1, Map.singleton (VGlobStr 0) "")
-
-tstr = TPtr TChar
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
