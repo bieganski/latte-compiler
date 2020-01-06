@@ -23,6 +23,8 @@ import System.FilePath
 import qualified Data.Text as T
 import qualified Data.Map as Map
 
+type Verbosity = Int
+myLLexer = myLexer
 
 isError :: Either T.Text b -> Bool
 isError (Left _) = True
@@ -45,7 +47,7 @@ run v fp s = do
              res <- runExceptT $ checkAll tree
              -- writeOutput res outFile
              case res of
-               Left _ -> putStrLn "frontend check failed."
+               Left t -> putStrLn $ "frontend check failed:\n" ++ T.unpack t
                Right _ -> do
                  putStrLn "frontend check succeeded."
                  let res2 = runBackend fp tree

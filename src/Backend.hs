@@ -119,8 +119,8 @@ genExp e = case e of
     (t1,v1) <- genExp e1
     (t2,v2) <- genExp e2
     case (v1,v2) of
-      (VInt n, VInt m) -> return (TInt, VInt $ n + m)
-      (VReg n, VInt m) -> do
+      (VInt n, VInt m) -> return (TInt, VInt $ n * m)
+      _ -> do
         fresh <- getFresh
         let op = case _op of
               Abs.Times -> Times

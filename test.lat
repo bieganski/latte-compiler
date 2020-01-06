@@ -1,5 +1,6 @@
 int main() {
 
-int a = 2137;
-return a;
+int a = readInt();
+int x = readInt();
+return a * x;
 }

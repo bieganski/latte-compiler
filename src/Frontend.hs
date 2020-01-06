@@ -1,20 +1,8 @@
-{-
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
--}
 
 module Frontend where
 
 import AbsLatte
 import qualified Types as Ts 
-import ParLatte
-import SkelLatte
-import PrintLatte
-import SkelLatte
-import LexLatte
-import ErrM
 
 import System.IO (hGetContents)
 import System.Environment (getArgs)
@@ -35,12 +23,6 @@ import Data.List(elemIndex)
 import Debug.Trace
 
 
--- bnfc stuff
-type ParseFun a = [Token] -> Err a
-myLLexer = myLexer
-type Verbosity = Int
-
-
 type EnvM e = ReaderT e (ExceptT T.Text IO)
 type StateM s = StateT s (ExceptT T.Text IO)
 
@@ -51,7 +33,6 @@ runStateM comp s = evalStateT comp s
 type FunctionCheckM = StateM (S.Set String)
 
 type FunctionM = StateM (S.Set String)
-
 
 
 getFunctionNames :: Program -> [String]
@@ -120,7 +101,7 @@ checkFunctionCases p = do
 
 
 funCheckState0 :: S.Set String
-funCheckState0 = S.empty
+funCheckState0 = S.singleton "readInt"
 
 
 returnsS :: Stmt -> Bool
@@ -278,23 +259,31 @@ onlyDeclaredVarsUsedTopDef (FnDef _ id args b) = do
 onlyDeclaredVarsUsed :: Program -> EnvM [Ident] ()
 onlyDeclaredVarsUsed (Program topDefs) = forM_ topDefs onlyDeclaredVarsUsedTopDef
 
+builtinsArgsNum :: Map.Map Ident Int
+builtinsArgsNum = Map.fromList [(Ident "printInt", 1),
+                            (Ident "readInt",  0)]
+
+
+argsCheckErrMsg :: Ident -> Stmt -> Ident -> Int -> Int -> T.Text
+argsCheckErrMsg funName s f wanted obtained = let errMsg = "error in function " ++ (show funName) ++ " in " ++ (show s) ++ ": "
+                                              in T.pack $ errMsg ++ "funtion " ++ (show f) ++ "applied to " ++ (show obtained) ++ " arguments, but it has " ++ (show wanted) ++ "\n"
 
 checkArgsNum :: Ident -> Stmt -> Expr -> StateM [TopDef] ()
 checkArgsNum funName s (EApp id lst) = do
-  topdefs <- get
-  let names = map (\(FnDef _ id _ _) -> id) topdefs
-  let errMsg = "error in function " ++ (show funName) ++ " in " ++ (show s) ++ ": "
-  case elemIndex id names of
-    Nothing -> throwError $ T.pack $ errMsg ++ "not defined function usage (" ++ (show id) ++ ")"
-    Just idx -> case topdefs !! idx of
-      (FnDef _ idd args _) -> do
-        -- traceM $ (show $ length args) ++ "|||" ++ (show $ length lst)
-        when ((length lst) /= (length args)) (throwError $ T.pack $ errMsg ++ "funtion " ++ (show idd) ++ "applied to " ++ (show $ length lst) ++ " arguments, but it has " ++ (show $ length args) ++ "\n")
-
+  case Map.lookup id builtinsArgsNum of
+    Just num -> when ((length lst) /= num) $ throwError $ argsCheckErrMsg funName s id (length lst) num
+    Nothing -> do
+      topdefs <- get
+      let names = map (\(FnDef _ id _ _) -> id) topdefs
+      case elemIndex id names of
+        Nothing -> throwError $ T.pack $ "not defined function usage (" ++ (show id) ++ ")"
+        Just idx -> case topdefs !! idx of
+          (FnDef _ idd args _) -> do
+            when ((length lst) /= (length args)) $ throwError $ argsCheckErrMsg funName s idd (length lst) (length args)
+            
 _check :: Ident -> Stmt -> Expr -> StateM [TopDef] ()
 _check id s e = do
   let calls = callsInExp e
-  -- traceM $ (show e) ++ ".." ++ (show calls)
   forM_ calls (checkArgsNum id s)
 
 checkItem :: Ident -> Stmt -> Item -> StateM [TopDef] ()
@@ -443,9 +432,12 @@ checkMain = do
                           
   
 typeCheck :: Program -> EnvM TypeCheckEnv ()
-typeCheck (Program topDefs) = local (\(l,_,v) -> (l,fenv,v)) $ checkMain >> forM_ topDefs typeCheckTopDef where
-  fenv = Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
+typeCheck (Program topDefs) = do
+  (l, builtins, v) <- ask
+  let fenv = Map.union builtins $ Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
+  local (const (l, fenv, v)) (checkMain >> forM_ topDefs typeCheckTopDef)
 
+    
 inferType :: Expr -> EnvM TypeCheckEnv Type
 inferType e = do
   (loc, fenv, venv) <- ask
@@ -509,8 +501,12 @@ checkAll tree = do
   resUniqueVars <- runReaderT (uniqueVars tree) []
   resDeclaredVars <- runReaderT (onlyDeclaredVarsUsed tree) []
   resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
+  let builtins = Map.fromList [(Ident "readInt", (Int, [])),
+                               (Ident "readString", (Str, [])),
+                               (Ident "printInt", (Void, [Int])),
+                               (Ident "printString", (Void, [Str]))]
   typeCheck <- runReaderT
     (typeCheck tree)
-    (Ts.FunName (Ident "dummy"), Map.empty, Map.empty)
+    (Ts.FunName (Ident "dummy"), builtins, Map.empty)
   return ()
   
