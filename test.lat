@@ -1,6 +1,7 @@
 int main() {
-
-int a = readInt();
-int x = readInt();
-return a * x;
+    string aa = "utkaj";
+    int a = readInt();
+    int x = readInt();
+    printInt(a*x);
+    return a * x;
 }

@@ -97,13 +97,19 @@ genExp e = case e of
   Abs.EApp id@(Abs.Ident iid) exps -> do
     tvs <- forM exps genExp
     TFun ret args <- getFunType id
-    fresh <- getFresh
-    emit $ FunCall (VReg fresh) ret iid tvs
-    return (ret, VReg fresh)
+    case ret of
+      TVoid -> do
+        emit $ FunCall VVoid TVoid iid tvs
+        return (TVoid, VVoid)
+      _ -> do
+        fresh <- getFresh
+        emit $ FunCall (VReg fresh) ret iid tvs
+        return (ret, VReg fresh)
   Abs.EString s -> do
     v@(VGlobStr num) <- addGlobStr s
+    f <- getFresh
     let tarr = (TArr (toInteger (1 + length s)) TChar) in
-      emit $ GetElemPtr (VReg num) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
+      emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
     return (TPtr TChar, v)
   Abs.Neg e -> genExp $ Abs.EAdd (Abs.ELitInt 0) Abs.Minus e
   Abs.Not e -> do
@@ -201,9 +207,14 @@ genStmt (Abs.Block (s:ss)) = do
     Abs.Ret e -> do
       (t, v) <- genExp e
       emit $ Ret (t, v)
+      comp
     Abs.VRet -> do
       emit $ Ret (TVoid, VDummy)
-    _ -> error "not implemented stmt"
+      comp
+    Abs.SExp e -> do
+      genExp e
+      comp
+    c -> error $ "not implemented stmt" ++ (show c)
 
 
 doAdd :: Abs.Ident -> Integer -> GenM LLVMTypeVal
@@ -240,9 +251,9 @@ builtInFunctions = Map.fromList
    (Abs.Ident "error",       TFun TVoid []),
    (Abs.Ident "_strlen",     TFun TInt [tstr]),
    (Abs.Ident "_malloc",     TFun tstr [TInt]),
-   (Abs.Ident "_strcat",     TFun tstr [TString, TString]),
-   (Abs.Ident "_strcmp",     TFun TInt [TString, TString]),
-   (Abs.Ident "_strcpy",     TFun tstr [TString, TString])]
+   (Abs.Ident "_strcat",     TFun tstr [tstr, tstr]),
+   (Abs.Ident "_strcmp",     TFun TInt [tstr, tstr]),
+   (Abs.Ident "_strcpy",     TFun tstr [tstr, tstr])]
 
  
 buildIR :: FilePath -> T.Text -> T.Text
@@ -265,8 +276,10 @@ emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp (Abs.Program topDefs) = do
   forM_ topDefs emitTopDefIR
+  emitGlobalStrDecls
   (ins,_,_) <- get
-  let content = buildLines $ map show $ reverse ins
+  let decls = map (\(Abs.Ident a, b) -> Declare a b) $ Map.toList builtInFunctions
+  let content = buildLines $ map show $ decls ++ (reverse ins)
   return $ buildIR fp content
   
 runBackend :: FilePath -> Abs.Program -> Either T.Text T.Text

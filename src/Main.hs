@@ -38,7 +38,7 @@ writeOutput res fp = case res of
 run :: Verbosity -> FilePath -> String -> IO ()
 run v fp s = do
   let ts = pProgram $ myLLexer s
-  let outFile = dropExtension fp <.> "myout"
+  let outFile = dropExtension fp <.> "ll"
   case ts of
            Bad s    -> do
              -- TODO putStrLn "ERROR"

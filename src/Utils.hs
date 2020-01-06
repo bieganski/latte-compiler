@@ -21,5 +21,5 @@ buildLines :: [String] -> T.Text
 buildLines xs = T.intercalate (T.pack "\n") (map T.pack xs) 
  
 buildCommaString :: [String] -> String 
-buildCommaString lst = T.unpack $ T.intercalate (T.pack ",") $ map T.pack lst
+buildCommaString lst = T.unpack $ T.intercalate (T.pack ", ") $ map T.pack lst
 

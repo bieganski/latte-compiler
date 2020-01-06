@@ -51,7 +51,6 @@ data LLVMType =
   TVoid |
   TArr Integer LLVMType |
   TChar |
-  TString |
   TFun LLVMType [LLVMType] |
   TPtr LLVMType |
   TLabel
@@ -65,7 +64,7 @@ instance Show LLVMType where
     TChar -> "i8"
     TPtr t -> (show t) ++ "*"
     TLabel -> "labelTODO"
-    TArr num t -> "[" ++ (show num) ++ ", " ++ (show t) ++ "]"
+    TArr num t -> "[" ++ (show num) ++ " x " ++ (show t) ++ "]"
     TFun ret args -> "TODO"
 
 data LLVMVal = VDummy
@@ -81,7 +80,7 @@ instance Show LLVMVal where
   show val = case val of
     VInt n -> show n
     VBool b -> if b == True then "true" else "false"
-    VVoid -> "VOID TODO"
+    VVoid -> "void"
     VGlobStr n -> "@str." ++ show n
     VLabel n -> "TODO"
     VReg n -> "%R." ++ show n
@@ -99,18 +98,20 @@ data Instr =
   | Cmp LLVMVal RelOp LLVMType LLVMVal LLVMVal
   | FunCall LLVMVal LLVMType String [LLVMTypeVal]
   | GetElemPtr LLVMVal LLVMType [LLVMTypeVal]
+  | Declare String LLVMType
 
 instance Show Instr where
   show i = case i of
-    FunEntry s (TFun ret args) -> "define " ++ (show ret) ++ "@" ++ s ++ "(" ++ (buildCommaString (map show args)) ++ ") {"
+    FunEntry s (TFun ret args) -> "\ndefine " ++ (show ret) ++ "@" ++ s ++ "(" ++ (buildCommaString (map show args)) ++ ") {"
     FunEnd -> "}"
-    GlobStrDecl n s -> "@.str." ++ (show n) ++ " = private unnamed_addr constant" ++ s ++ "\\00\", " ++ "align 1" 
+    GlobStrDecl n s -> (show n) ++ " = private unnamed_addr constant " ++ (show (TArr (toInteger (1 + (length s))) TChar)) ++ " c\"" ++ s ++ "\\00\", align 1" 
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
     Cmp r op t v1 v2 -> (show r) ++ " = icmp " ++ (show op) ++ " " ++ (show t) ++ (show v1)  ++ ", " ++ (show v2)
     Ret (t,v) -> "ret " ++ (show t) ++ " " ++ (show v)
-    GetElemPtr r t tvs -> "%" ++ (show r) ++ " = getelementptr" ++ (show t) ++ ", " ++ (buildCommaString (map show tvs))
-    FunCall r t id args -> (show r) ++ " = call " ++ (show t) ++ "@" ++ id ++ "(" ++ (buildCommaString (map show args)) ++ ")" 
-      
-
-
-
+    GetElemPtr r t tvs -> (show r) ++ " = getelementptr " ++ (show t) ++ ", " ++ (buildCommaString (map showtv tvs))
+    FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ "@" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
+    FunCall VVoid TVoid id args -> "call " ++ (show VVoid) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv args)) ++ ")"
+    Declare funName (TFun ret args) -> "declare " ++ (show ret) ++ " @" ++ funName ++ "(" ++ (buildCommaString (map show args)) ++ ")"
+    
+showtv :: LLVMTypeVal -> String
+showtv (a,b) = (show a) ++ " " ++ (show b)
