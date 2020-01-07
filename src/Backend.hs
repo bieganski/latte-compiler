@@ -90,23 +90,6 @@ addGlobStr s = do
     [(VGlobStr num, _)] -> return $ VGlobStr num 
 
 
-getExprVars :: Abs.Expr -> Set.Set Abs.Ident
-getExprVars e = case e of
-  Abs.EVar id -> Set.singleton id
-  Abs.EApp _ es -> Set.unions $ map getExprVars es
-  Abs.Neg e -> getExprVars e
-  Abs.Not e -> getExprVars e
-  Abs.EMul e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
-  Abs.EAdd e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
-  Abs.ERel e1 _ e2 -> Set.union (getExprVars e1) (getExprVars e2)
-  Abs.EAnd e1 e2 -> Set.union (getExprVars e1) (getExprVars e2)
-  Abs.EOr e1 e2 -> Set.union (getExprVars e1) (getExprVars e2)
-  _ -> Set.empty
-
-getCommonVars :: Abs.Expr -> Abs.Expr -> Set.Set Abs.Ident
-getCommonVars e1 e2 = Set.intersection (getExprVars e1) (getExprVars e2)
-
-
 genExp :: Abs.Expr -> GenM LLVMTypeVal
 genExp e = case e of
   Abs.EVar id -> getVar id
