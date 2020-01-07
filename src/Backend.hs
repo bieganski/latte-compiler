@@ -23,8 +23,9 @@ import Control.Lens
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Set as Set
-import Debug.Trace
+import qualified Data.List.Unique as LU
 
+import Debug.Trace
 
 
 type FuncEnv = Map.Map Abs.Ident LLVMType
@@ -201,7 +202,6 @@ jumpAndOr e2 v1 op = do
         emit $ Phi (VReg res) TBool [(v1, VLabel blockNum), (v2, VLabel r)]
         return (TBool, VReg res)
 
-
 tstr = TPtr TChar
 
 -- http://www.cplusplus.com/reference/cstring/strcpy/ and /strlen and /strcat 
@@ -275,7 +275,7 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
 
 
 
-data AssignedCheck = AssCheck { outer :: [Abs.Ident], inner :: [Abs.Ident], result :: [Abs.Ident] } 
+data AssignedCheck = AssCheck { inner :: [Abs.Ident], result :: [Abs.Ident] } 
 
 -- list context variables (already existing), that are
 -- assigned in given block (useful during PHI computation)
@@ -283,13 +283,20 @@ data AssignedCheck = AssCheck { outer :: [Abs.Ident], inner :: [Abs.Ident], resu
 -- thus call with empty list.
 varsAssigned :: Abs.Stmt -> State AssignedCheck ()
 varsAssigned s = do
-  AssCheck o i r <- get
+  AssCheck i r <- get
   case s of
     Abs.Decl _ items -> modify \st -> st {inner = inner st ++ map (^.Abs.iid) items}
     Abs.Ass id _ -> case id `elem` i of
       False -> modify \st -> st {result = id : (result st)}
       True -> return ()
     Abs.BStmt (Abs.Block stmts) -> forM_ stmts varsAssigned
+    Abs.Incr id -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return () 
+    Abs.Decr id -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return ()
+    _ -> return ()
 
 
 genStmtEnhanced :: Abs.Block -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
@@ -309,6 +316,22 @@ genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
     Abs.BStmt (Abs.Block ss) -> do
       (inner2, m2) <- genStmtEnhanced (Abs.Block ss) (inner, res)
       genStmtEnhanced (Abs.Block stmts) (inner2, m2)
+    Abs.Decr id -> do
+      (t, val) <- doAdd id (-1)
+      let venv' = Map.insert id (t, val) venv
+      let comp = case id `elem` inner of
+            True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
+            False -> do
+              genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,val) res)
+      local (const (fenv, venv')) comp
+    Abs.Incr id -> do
+      (t, val) <- doAdd id 1
+      let venv' = Map.insert id (t, val) venv
+      let comp = case id `elem` inner of
+            True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
+            False -> do
+              genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,val) res)
+      local (const (fenv, venv')) comp
     _ -> do
       genStmt (Abs.Block (s:stmts))
       return (inner, res)
@@ -346,6 +369,7 @@ genStmt (Abs.Block (s:ss)) = do
       emit $ Ret (t, v)
       comp
     Abs.VRet -> do
+      _ <- getFresh
       emit $ Ret (TVoid, VDummy)
       comp
     Abs.SExp e -> do
@@ -358,9 +382,9 @@ genStmt (Abs.Block (s:ss)) = do
       trueLabel <- getFresh
       let jump = \false -> BrCond (TBool, VReg f) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
       (ins,n0,m0,b) <- get
-      let AssCheck _ _ assigned1 = execState (varsAssigned s1) $ AssCheck (Map.keys venv) [] []
-      let AssCheck _ _ assigned2 = execState (varsAssigned s1) $ AssCheck (Map.keys venv) [] []
-      let phiNodes = L.intersect assigned1 assigned2
+      let AssCheck _ assigned1 = execState (varsAssigned s1) $ AssCheck [] []
+      let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
+      let phiNodes = LU.unique $ L.intersect assigned1 assigned2
       put ([],n0,m0,trueLabel) -- entering new block
       emit $ Comment $ "block " ++ (show trueLabel)
       (_, mm1) <- genStmtEnhanced (Abs.Block [s1]) ([], Map.empty)
@@ -378,24 +402,78 @@ genStmt (Abs.Block (s:ss)) = do
                            [Br (TLabel, VLabel finishLabel)]]
       
       tvs <- mapM getVar phiNodes
-      phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel s1b) (VLabel s2b) (id,t,v)) $ zip tvs phiNodes
-      put (phiIns ++ (reverse allIns) ++ ins,n2,m2,finishLabel)
+      _phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel s1b) (VLabel s2b) (id,t,v)) $ zip tvs phiNodes
+      let phiIns = map snd _phiIns
+      let newMap = Map.fromList $ map fst _phiIns
+      put ((reverse phiIns) ++ (reverse allIns) ++ ins,n2,m2,finishLabel)
       emit $ Comment $ "block " ++ (show finishLabel)
-      comp
+      local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
     Abs.Cond e s1 -> do
       genStmt $ (Abs.Block [Abs.CondElse e s1 Abs.Empty])
       comp
-    c -> error $ "not implemented stmt" ++ (show c)
+    Abs.While e s -> do
+      let AssCheck _ _phiNodes = execState (varsAssigned s) $ AssCheck [] []
+      let phiNodes = LU.unique $ _phiNodes
+      (_,_,_,startb) <- get
+      be <- getFresh
+      emit $ Br (TLabel, VLabel be)
+      emit $ Comment $ "block" ++ (show be)
+      (ins,n0,m0,b) <- get
+      let ts = map fst $ map (\id -> venv Map.! id) phiNodes   
+      let mapUpdate = Map.fromList $ zip phiNodes $ zip ts $ map VReg [n0..]
+      put ([],n0 + toInteger (length phiNodes),m0,be)
+      (te, ve) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genExp e
+      vecmp <- getFresh
+      emit $ Cmp (VReg vecmp) NE TBool ve (VInt 0)
+      sLabel <- getFresh
+      -- endLabel = ??
+      (inse,ne,me,be_end) <- get
+      put ([],ne,me,sLabel)
+      emit $ Comment $ "block" ++ (show sLabel)
+      (_, svenv) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genStmtEnhanced (Abs.Block [s]) ([], Map.empty)
+      (_,_,_,bs_end) <- get
+      endLabel <- getFresh
+      emit $ Br (TLabel, VLabel be)
+      emit $ Comment $ "block " ++ (show endLabel)
+      tvs <- mapM getVar phiNodes
+      (itmp,ntmp,mtmp,btmp) <- get
+      put (itmp,n0,mtmp,btmp)
+      _phis <- mapM (\((t,v), id) -> constructPhi svenv venv (VLabel bs_end) (VLabel startb) (id,t,v)) $ zip tvs phiNodes
+      put (itmp,ntmp,mtmp,btmp)
+      let phis = map snd _phis
+      let newMap = Map.fromList $ map fst _phis
+      (inss,ns,ms,bs_end) <- get
+      let ejump = BrCond (TBool, VReg vecmp) (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)
+      let allIns = concat [inss ++ (ejump:inse) ++ (reverse phis) ++ ins]
+      put (allIns,ns,ms,endLabel)
+      local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
 
+
+prefix :: Eq a => [a] -> [a] -> Bool 
+prefix [] _ = True
+prefix (y:ys) (x:xs)  
+  | x == y    = prefix ys xs 
+  | otherwise = prefix (y:ys) xs
+
+def :: LLVMType -> LLVMVal
+def t = case t of
+  TVoid -> VDummy
+  TBool -> VBool False
+  TInt -> VInt 0
+
+fixEmptyBlock :: LLVMType -> [Instr] -> [Instr]
+fixEmptyBlock rett (FunEnd:((Comment s):rest)) = (FunEnd:(a:((Comment s):rest)))
+  where a = Ret (rett, def rett)
+fixEmptyBlock _ a = a
 
 constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal ->
   LLVMVal -> LLVMVal ->
-  (Abs.Ident, LLVMType, LLVMVal) -> GenM Instr 
+  (Abs.Ident, LLVMType, LLVMVal) -> GenM ((Abs.Ident, LLVMTypeVal), Instr) 
 constructPhi m1 m2 b1 b2 (id,t,v) = do
   f <- getFresh
   let (_, v1) = m1 Map.! id
   let (_, v2) = m2 Map.! id
-  return $ Phi (VReg f) t [(v1, b1), (v2, b2)]
+  return ((id, (t, VReg f)), Phi (VReg f) t [(v1, b1), (v2, b2)])
   
 
 doAdd :: Abs.Ident -> Integer -> GenM LLVMTypeVal
@@ -408,13 +486,13 @@ doAdd id x = do
     VReg n -> do
       f <- getFresh
       emit $ Bin (VReg f) Plus TInt (VReg n) (VInt x)
-      return (t, (VReg n))
+      return (t, (VReg f))
 
 
 t0 :: Abs.Program -> FuncEnv
 t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f topDefs  where
   f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
-                                       
+
 
 e0 :: Abs.Program -> GenE
 e0 p = (t0 p, Map.empty)
@@ -455,6 +533,8 @@ emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   (ins,_,m,_) <- get
   put (ins, toInteger (1 + (length args)), m, toInteger $ length args)
   flip local comp $ \(fenv, _) -> (fenv, createFunctionEnv args)
+  (ins2,n,m,b) <- get
+  put (fixEmptyBlock (mapType ret) ins2,n,m,b)
   
 
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text

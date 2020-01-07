@@ -8,10 +8,22 @@ if (a > 0) {
 return c;
 }
 
+
+int wh(int a) {
+    int b = 5;
+    while(a > 0) {
+        b++;
+        a--;
+    } 
+    return b;
+} 
+
+void a() {return;}
+
 int main() {
     string a = "utkaj";
-    string b = readString();
-    printString(a + b);
-    printInt (1 + 2);
+    // string b = readString();
+    printString(a + " latare");
+    printInt (wh(7));
     return 0;
 }
