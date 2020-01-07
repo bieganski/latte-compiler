@@ -83,7 +83,7 @@ instance Show LLVMVal where
     VGlobStr n -> "@str." ++ show n
     VLabel n -> "%" ++ show n
     VReg n -> "%" ++ show n
-    VDummy -> "TODO nic"
+    VDummy -> ""
 
 
 type LLVMTypeVal = (LLVMType, LLVMVal)

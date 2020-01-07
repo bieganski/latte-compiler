@@ -274,6 +274,47 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
   return (fenv, Map.insert id (t, v) venv)
 
 
+
+data AssignedCheck = AssCheck { outer :: [Abs.Ident], inner :: [Abs.Ident], result :: [Abs.Ident] } 
+
+-- list context variables (already existing), that are
+-- assigned in given block (useful during PHI computation)
+-- second argument is internal accumulator of block-declared ones,
+-- thus call with empty list.
+varsAssigned :: Abs.Stmt -> State AssignedCheck ()
+varsAssigned s = do
+  AssCheck o i r <- get
+  case s of
+    Abs.Decl _ items -> modify \st -> st {inner = inner st ++ map (^.Abs.iid) items}
+    Abs.Ass id _ -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return ()
+    Abs.BStmt (Abs.Block stmts) -> forM_ stmts varsAssigned
+
+
+genStmtEnhanced :: Abs.Block -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
+genStmtEnhanced (Abs.Block []) st = return st
+genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
+  env@(fenv, venv) <- ask
+  case s of
+    Abs.Decl t items -> do
+      env' <- foldM declChangeEnv env $ zip (repeat t) items
+      local (const env') $ genStmtEnhanced (Abs.Block stmts) (inner ++ map (^.Abs.iid) items, res)
+    Abs.Ass id e -> case id `elem` inner of
+      True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
+      False -> do
+        (t,v) <- genExp e
+        let venv' = Map.insert id (t,v) venv
+        local (const (fenv, venv')) $ genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,v) res)
+    Abs.BStmt (Abs.Block ss) -> do
+      (inner2, m2) <- genStmtEnhanced (Abs.Block ss) (inner, res)
+      genStmtEnhanced (Abs.Block stmts) (inner2, m2)
+    _ -> do
+      genStmt (Abs.Block (s:stmts))
+      return (inner, res)
+      
+
+
 genStmt :: Abs.Block -> GenM ()
 genStmt (Abs.Block []) = return ()
 genStmt (Abs.Block (s:ss)) = do
@@ -310,8 +351,52 @@ genStmt (Abs.Block (s:ss)) = do
     Abs.SExp e -> do
       genExp e
       comp
+    Abs.CondElse e s1 s2 -> do
+      (TBool,v) <- genExp e
+      f <- getFresh
+      emit $ Cmp (VReg f) NE TBool v (VInt 0)
+      trueLabel <- getFresh
+      let jump = \false -> BrCond (TBool, VReg f) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
+      (ins,n0,m0,b) <- get
+      let AssCheck _ _ assigned1 = execState (varsAssigned s1) $ AssCheck (Map.keys venv) [] []
+      let AssCheck _ _ assigned2 = execState (varsAssigned s1) $ AssCheck (Map.keys venv) [] []
+      let phiNodes = L.intersect assigned1 assigned2
+      put ([],n0,m0,trueLabel) -- entering new block
+      emit $ Comment $ "block " ++ (show trueLabel)
+      (_, mm1) <- genStmtEnhanced (Abs.Block [s1]) ([], Map.empty)
+      falseLabel <- getFresh
+      (s1ins,n1,m1,s1b) <- get
+      put ([],n1,m1,falseLabel)
+      emit $ Comment $ "block " ++ (show falseLabel)
+      (_, mm2) <- genStmtEnhanced (Abs.Block [s2]) ([], Map.empty)
+      finishLabel <- getFresh
+      (s2ins,n2,m2,s2b) <- get
+      let allIns = concat [[jump falseLabel],
+                           reverse s1ins,
+                           [Br (TLabel, VLabel finishLabel)],
+                           reverse s2ins,
+                           [Br (TLabel, VLabel finishLabel)]]
+      
+      tvs <- mapM getVar phiNodes
+      phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel s1b) (VLabel s2b) (id,t,v)) $ zip tvs phiNodes
+      put (phiIns ++ (reverse allIns) ++ ins,n2,m2,finishLabel)
+      emit $ Comment $ "block " ++ (show finishLabel)
+      comp
+    Abs.Cond e s1 -> do
+      genStmt $ (Abs.Block [Abs.CondElse e s1 Abs.Empty])
+      comp
     c -> error $ "not implemented stmt" ++ (show c)
 
+
+constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal ->
+  LLVMVal -> LLVMVal ->
+  (Abs.Ident, LLVMType, LLVMVal) -> GenM Instr 
+constructPhi m1 m2 b1 b2 (id,t,v) = do
+  f <- getFresh
+  let (_, v1) = m1 Map.! id
+  let (_, v2) = m2 Map.! id
+  return $ Phi (VReg f) t [(v1, b1), (v2, b2)]
+  
 
 doAdd :: Abs.Ident -> Integer -> GenM LLVMTypeVal
 doAdd id x = do
