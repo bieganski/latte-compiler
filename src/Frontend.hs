@@ -514,3 +514,97 @@ checkAll tree = do
     (Ts.FunName (Ident "dummy"), builtins, Map.empty)
   return ()
   
+
+
+
+-- varsInExp :: Expr -> [Ident]
+
+-- replaceStmt :: Program -> Stmt ->
+
+
+data Val = VBool Bool | VInt Integer | VStr String | CxtDep
+
+
+checkExpr :: Expr -> EnvM (Map.Map Ident Val) Val
+checkExpr e = do
+  v <- ask
+  case e of
+    EVar x -> return $ v Map.! x
+    ELitInt n -> return $ VInt n
+    ELitTrue -> return $ VBool True
+    ELitFalse -> return $ VBool False
+    EApp id exps -> return $ VBool False -- TODO
+    EString s -> return $ VStr s
+    Neg e -> do
+      res <- checkExpr e
+      case res of
+        VInt n -> return $ VInt (-n)
+        CxtDep -> return CxtDep
+    Not e -> do
+      res <- checkExpr e
+      case res of
+        VBool True -> return $ VBool False
+        VBool False -> return $ VBool True
+        CxtDep -> return CxtDep
+    EMul e1 op e2 -> do
+      r1 <- checkExpr e1
+      r2 <- checkExpr e2
+      case (r1,r2) of
+        (CxtDep, _) -> return CxtDep
+        (_, CxtDep) -> return CxtDep
+        (VInt n, VInt m) -> case op of
+          Times -> return $ VInt $ n * m
+          Div -> case m of
+            0 -> throwError $ T.pack $ "Division by 0 in " ++ (show $ EMul e1 op e2)
+            _ -> return $ VInt $  n `div` m
+          Mod -> return $ VInt $ n `mod` m
+    EAdd e1 op e2 -> do
+      r1 <- checkExpr e1
+      r2 <- checkExpr e2
+      case (r1,r2) of
+        (CxtDep, _) -> return CxtDep
+        (_, CxtDep) -> return CxtDep
+        (VInt n, VInt m) -> case op of
+          Plus -> return $ VInt $ n + m
+          Minus -> return $ VInt $ n - m
+        (VStr s, VStr l) -> return $ VStr $ s ++ l
+    ERel e1 op e2 -> do
+      r1 <- checkExpr e1
+      r2 <- checkExpr e2
+      let c = \v -> return $ VBool v
+      case (r1,r2) of
+        (CxtDep, _) -> return CxtDep
+        (_, CxtDep) -> return CxtDep
+        (VInt n, VInt m) -> do
+          case op of
+            LTH -> c $ n < m
+            LE  -> c $ n <= m
+            GTH -> c $ n > m
+            GE  -> c $ n >= m
+            EQU -> c $ n == m
+            NE  -> c $ n /= m
+    EAnd e1 e2 -> do
+      r1 <- checkExpr e1
+      r2 <- checkExpr e2
+      case (r1,r2) of
+        (CxtDep, _) -> return CxtDep
+        (_, CxtDep) -> return CxtDep
+        (VBool True, v) -> return v
+        (VBool False, _) -> return $ VBool False
+    EOr e1 e2 -> do
+      r1 <- checkExpr e1
+      r2 <- checkExpr e2
+      case (r1,r2) of
+        (CxtDep, _) -> return CxtDep
+        (_, CxtDep) -> return CxtDep
+        (VBool False, v) -> return v
+        (VBool True, _) -> return $ VBool True
+
+
+
+simplify :: Expr -> Expr
+simplify = undefined
+
+
+cleanTree :: Program -> Program
+cleanTree (Program topDefs) = undefined
