@@ -48,9 +48,9 @@ run v fp s = do
              -- writeOutput res outFile
              case res of
                Left t -> putStrLn $ "frontend check failed:\n" ++ T.unpack t
-               Right _ -> do
+               Right newTree -> do
                  putStrLn "frontend check succeeded."
-                 let res2 = runBackend fp tree
+                 let res2 = runBackend fp newTree
                  case res2 of
                    Right t -> do
                      putStrLn $ "backend: @@@@\n" ++ T.unpack t

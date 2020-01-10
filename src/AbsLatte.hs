@@ -8,7 +8,7 @@ import Control.Lens
 
 
 newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
-data Program = Program [TopDef]
+data Program = Program { _defs :: [TopDef] }
   deriving (Eq, Ord, Show, Read)
 
 data TopDef = FnDef {_ft :: Type, _fid :: Ident, _as :: [Arg], _bl :: Block }
@@ -17,7 +17,7 @@ data TopDef = FnDef {_ft :: Type, _fid :: Ident, _as :: [Arg], _bl :: Block }
 data Arg = Arg {_t :: Type, _aid :: Ident}
   deriving (Eq, Ord, Show, Read)
 
-data Block = Block [Stmt]
+data Block = Block { _ss :: [Stmt] }
   deriving (Eq, Ord, Show, Read)
 
 data Stmt
@@ -29,9 +29,9 @@ data Stmt
     | Decr {_sid :: Ident}
     | Ret {_se :: Expr}
     | VRet
-    | Cond {_se :: Expr, _ss :: Stmt}
+    | Cond {_se :: Expr, _cs :: Stmt}
     | CondElse {_se :: Expr, _ss1 :: Stmt, _ss2 :: Stmt}
-    | While {_se :: Expr, _ss :: Stmt}
+    | While {_se :: Expr, _ws :: Stmt}
     | SExp {_se :: Expr}
   deriving (Eq, Ord, Show, Read)
 
@@ -72,3 +72,5 @@ makeLenses ''Item
 makeLenses ''Stmt
 makeLenses ''Expr
 makeLenses ''Arg
+makeLenses ''Block
+makeLenses ''Program

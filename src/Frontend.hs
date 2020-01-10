@@ -17,9 +17,10 @@ import qualified Data.Map as Map
 import System.FilePath
 import System.Process
 import qualified Data.Set as S
-import Data.List.Unique(repeated, isUnique)
+import Data.List.Unique as LU
 import Data.List(elemIndex)
-
+import Control.Lens 
+import PrintLatte
 import Debug.Trace
 
 
@@ -45,7 +46,7 @@ checkFunctionNamesUnique p@(Program topDefs) s = (length topDefs) == (S.size s)
 functionNamesCheck :: Program -> FunctionM ()
 functionNamesCheck p@(Program topDefs) = do
   let names = getFunctionNames p
-  let reps = repeated names
+  let reps = LU.repeated names
   when (reps /= []) (throwError $ T.pack $ "function names not unique: " ++ (show reps))
   when (not $ "main" `elem` names) (throwError $ T.pack "'main' not found!")
 
@@ -88,7 +89,7 @@ usedFunNames (e:es) names = case e of
 
 
 getFilteredRepeats :: Ord b => [a] -> (a -> Bool) -> (a -> b) -> [b]
-getFilteredRepeats lst filt f = repeated $ map f (filter filt lst)
+getFilteredRepeats lst filt f = LU.repeated $ map f (filter filt lst)
 
 
 checkFunctionCases :: Program -> FunctionM ()
@@ -113,14 +114,26 @@ returnsS s = case s of
   _ -> False
 
 
+fixReturnLack :: TopDef -> TopDef
+fixReturnLack (FnDef Void id args (Block [])) = FnDef Void id args $ Block [VRet]
+fixReturnLack a@(FnDef t id args (Block ss)) = case last ss of
+  VRet -> a
+  Ret _ -> a
+  _ -> FnDef t id args $ Block $ ss ++ [ret]
+    where ret = case t of
+            Void -> VRet
+            Bool -> Ret ELitFalse
+            Int -> Ret $ ELitInt 0
+            
 returnsProperlyTopDef :: TopDef -> ExceptT T.Text IO ()
-returnsProperlyTopDef (FnDef _ (Ident id) _ (Block stmts)) = do
+returnsProperlyTopDef (FnDef t (Ident id) _ (Block stmts)) = do
   let rets = map returnsS stmts
-  case isUnique True rets of
-    Nothing -> throwError $ T.pack $ "function " ++ id ++ " does not return in all cases!" 
-    Just False -> throwError $ T.pack $ "function " ++ id ++ " returns multiple times!"
-    Just True -> when ((last rets) /= True) (throwError $ T.pack $ "returning statement must be the last one in function!")
-  return ()
+  if (t == Void && stmts == []) then return () else do
+    case isUnique True rets of
+      Nothing -> throwError $ T.pack $ "function " ++ id ++ " does not return in all cases!" 
+      Just False -> throwError $ T.pack $ "function " ++ id ++ " returns multiple times!"
+      Just True -> when ((last rets) /= True) (throwError $ T.pack $ "returning statement must be the last one in function!")
+
 
 returnsProperly :: Program -> ExceptT T.Text IO ()
 returnsProperly (Program topDefs) = forM_ topDefs returnsProperlyTopDef
@@ -128,7 +141,7 @@ returnsProperly (Program topDefs) = forM_ topDefs returnsProperlyTopDef
 uniqueArgsTopDef :: TopDef -> ExceptT T.Text IO ()
 uniqueArgsTopDef (FnDef _ (Ident id) args _) = do
   let unpack = \(Arg _ (Ident id)) -> id
-  case repeated $ map unpack args of
+  case LU.repeated $ map unpack args of
     [] -> return ()
     x:xs -> throwError $ T.pack $ "argument name " ++ x ++ " not unique in function " ++ id
 
@@ -349,7 +362,7 @@ typeCheckBlock (Block []) = return ()
 typeCheckBlock (Block (s:stmts)) = do
   (loc, fenv, venv) <- ask
   case s of
-    Empty -> typeCheckBlock (Block stmts)
+    AbsLatte.Empty -> typeCheckBlock (Block stmts)
     BStmt b -> (typeCheckBlock b) >> (typeCheckBlock (Block stmts))
     Decl t items -> do
       let checkItem = \t2 -> \it -> case it of
@@ -484,6 +497,7 @@ inferType e = do
       t2 <- inferType e2
       case (t1,t2,relOp) of
         (Int,Int,_) -> return Bool
+        (Bool,Bool,_) -> return Bool
         _ -> throwError $ T.pack $ printf "error in %s: type mismatch during comparision (%s and %s) in %s" (show loc) (show t1) (show t2) (show e)
     EAnd e1 e2 -> do
       t1 <- inferType e1
@@ -495,27 +509,7 @@ inferType e = do
       if t1 == Bool && t2 == Bool then return Bool else throwError $ T.pack $ printf "error in %s: logical OR type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
 
 
-
-checkAll :: Program -> ExceptT T.Text IO ()
-checkAll tree = do
-  resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
-  resReturn <- returnsProperly tree
-  resArgs <- uniqueArgs tree
-  resUniqueVars <- runReaderT (uniqueVars tree) []
-  resDeclaredVars <- runReaderT (onlyDeclaredVarsUsed tree) []
-  resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
-  let builtins = Map.fromList [(Ident "readInt", (Int, [])),
-                               (Ident "readString", (Str, [])),
-                               (Ident "printInt", (Void, [Int])),
-                               (Ident "printString", (Void, [Str])),
-                               (Ident "error", (Void, []))]
-  typeCheck <- runReaderT
-    (typeCheck tree)
-    (Ts.FunName (Ident "dummy"), builtins, Map.empty)
-  return ()
-  
-
-
+ 
 
 -- varsInExp :: Expr -> [Ident]
 
@@ -524,8 +518,9 @@ checkAll tree = do
 
 data Val = VBool Bool | VInt Integer | VStr String | CxtDep
 
+type OptMap = Map.Map Ident Val
 
-checkExpr :: Expr -> EnvM (Map.Map Ident Val) Val
+checkExpr :: Expr -> EnvM OptMap Val
 checkExpr e = do
   v <- ask
   case e of
@@ -601,10 +596,94 @@ checkExpr e = do
         (VBool True, _) -> return $ VBool True
 
 
+declVal :: Type -> Item -> EnvM OptMap Val
+declVal t i = case i of
+  NoInit id -> case t of
+    Int -> return $ VInt 0
+    Str -> return $ VStr ""
+    Bool -> return $ VBool False
+  Init id e -> checkExpr e
 
-simplify :: Expr -> Expr
-simplify = undefined
+removeUnreachableBlock :: Block -> EnvM OptMap Block
+removeUnreachableBlock (Block []) = return $ Block []
+removeUnreachableBlock (Block (s:stmts)) = do
+  let comp = removeUnreachableBlock $ Block stmts
+  let f = \b' -> return $ Block $ s : (b'^.ss)
+  m <- ask
+  case s of
+    BStmt b -> do
+      Block b' <- removeUnreachableBlock b
+      comp >>= \(Block bb) -> return $ Block $ (BStmt (Block b')) : bb 
+    AbsLatte.Empty -> comp >>= f
+    Decl t items -> do
+      let ids = map (^.iid) items
+      vals <- mapM (declVal t) items
+      let m' = Map.fromList $ zip ids vals
+      local (\mm -> Map.union m' mm) comp >>= f
+    Ass id e -> do
+      v <- checkExpr e
+      local (const $ Map.insert id v m) comp >>= f
+    Incr id -> do
+      let v = m Map.! id
+      let v' = case v of
+            VInt n -> VInt $ n + 1
+            CxtDep -> CxtDep
+      local (const $ Map.insert id v' m) comp >>= f
+    Decr id -> do
+      let v = m Map.! id
+      let v' = case v of
+            VInt n -> VInt $ n - 1
+            CxtDep -> CxtDep
+      local (const $ Map.insert id v' m) comp >>= f
+    Ret e -> comp >>= f
+    VRet -> comp >>= f
+    Cond e br1 -> do
+      v <- checkExpr e
+      case v of
+        CxtDep -> comp >>= f
+        VBool True -> comp >>= \(Block b) -> return $ Block $ br1 : b
+        VBool False -> comp
+    CondElse e br1 br2 -> do
+      v <- checkExpr e
+      case v of
+        CxtDep -> comp  >>= f
+        VBool True -> comp >>= \(Block b) -> return $ Block $ br1 : b
+        VBool False -> comp >>= \(Block b) -> return $ Block $ br2 : b
+    While e s1 -> comp >>= f
+    SExp e -> comp >>= f
 
 
-cleanTree :: Program -> Program
-cleanTree (Program topDefs) = undefined
+removeUnreachable :: TopDef -> EnvM OptMap TopDef
+removeUnreachable (FnDef ret id args b) = do
+  let comp = removeUnreachableBlock b
+  let m = Map.fromList $ zip ids (repeat CxtDep) where ids = map (^.aid) args
+  b' <- local (const m) comp
+  return $ FnDef ret id args b'
+  
+
+
+removeUnreachableCode :: Program -> ExceptT T.Text IO Program
+removeUnreachableCode (Program topDefs) = runReaderT (forM topDefs removeUnreachable >>= \defs -> return $ Program defs) Map.empty
+
+
+
+checkAll :: Program -> ExceptT T.Text IO Program
+checkAll tree = do
+  resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
+  resArgs <- uniqueArgs tree
+  resUniqueVars <- runReaderT (uniqueVars tree) []
+  resDeclaredVars <- runReaderT (onlyDeclaredVarsUsed tree) []
+  resProperCallNum <- runStateM (properArgumentNumberCalls tree) []
+  let builtins = Map.fromList [(Ident "readInt", (Int, [])),
+                               (Ident "readString", (Str, [])),
+                               (Ident "printInt", (Void, [Int])),
+                               (Ident "printString", (Void, [Str])),
+                               (Ident "error", (Void, []))]
+  typeCheck <- runReaderT
+    (typeCheck tree)
+    (Ts.FunName (Ident "dummy"), builtins, Map.empty)
+  newTree <- removeUnreachableCode tree
+  traceM $ printTree newTree
+  resReturn <- returnsProperly newTree
+  let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
+  return newTreeWithRets
