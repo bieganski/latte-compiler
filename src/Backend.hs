@@ -77,9 +77,6 @@ getFunType id = do
   return $ m Map.! id
 
 
-debug = (TInt, VInt 2137)
-
-
 addGlobStr :: String -> GenM LLVMVal
 addGlobStr s = do
   (ins,n,m,b) <- get
@@ -89,6 +86,32 @@ addGlobStr s = do
       put (ins,n,Map.insert glob s m,b)
       return $ VGlobStr $ toInteger $ Map.size m
     [(VGlobStr num, _)] -> return $ VGlobStr num 
+
+
+inferType :: Abs.Expr -> GenM LLVMType
+inferType e = case e of
+    Abs.EVar id -> do
+      getVar id >>= return . fst
+    Abs.ELitInt _ -> return TInt
+    Abs.ELitTrue -> return TBool
+    Abs.ELitFalse -> return TBool 
+    Abs.EApp id exprs -> do
+      TFun ret _ <- getFunType id
+      return ret
+    Abs.EString _ -> return tstr
+    Abs.Neg e -> return TInt
+    Abs.Not e -> return TBool
+    Abs.EMul e1 _ e2 -> return TInt
+    Abs.EAdd e1 op e2 -> do
+      t1 <- inferType e1
+      t2 <- inferType e2
+      case (t1,t2) of
+        (TInt, TInt) -> return TInt
+        (TPtr TChar, TPtr TChar) -> return tstr
+        _ -> error "frontend internal error: add"
+    Abs.ERel e1 relOp e2 -> return TBool 
+    Abs.EAnd e1 e2 -> return TBool
+    Abs.EOr e1 e2 -> return TBool
 
 
 genExp :: Abs.Expr -> GenM LLVMTypeVal
@@ -147,12 +170,35 @@ genExp e = case e of
           Abs.GE  -> GE
           Abs.EQU -> EQU
           Abs.NE  -> NE
-    case (v1,v2) of
-      (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
-      _ -> do
-        f <- getFresh
-        emit $ Cmp (VReg f) op TInt v1 v2
-        return (TBool, (VReg f))
+    case (t1,t2) of
+      (TInt, TInt) -> case (v1,v2) of
+        (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
+        _ -> do
+          f <- getFresh
+          emit $ Cmp (VReg f) op TInt v1 v2
+          return (TBool, (VReg f))
+      (TBool, TBool) -> case (v1,v2) of
+        (VBool a, VBool b) -> case op of
+          EQU -> return (TBool, VBool $ a == b)
+          NE -> return (TBool, VBool $ a /= b)
+          _ -> error "backend found frontend error: bool relop"
+        _ -> do
+          f <- getFresh
+          emit $ Cmp (VReg f) op TBool v1 v2
+          return (TBool, (VReg f))
+      (_,_) -> case (v1, v2) of
+        (VGlobStr s1num, VGlobStr s2num) -> do
+          (_,_,m,_) <- get
+          let s1 = m Map.! (VReg s1num)
+          let s2 = m Map.! (VReg s2num)
+          case op of
+            NE -> return (TBool, VBool $ s1 /= s2)
+            EQU -> return (TBool, VBool $ s1 == s2)
+            _ -> error "backend found frontend error: string relop"
+        _ -> do
+          f <- getFresh
+          emit $ Cmp (VReg f) op tstr v1 v2
+          return (TBool, (VReg f))
   Abs.EAdd e1 _op e2 -> do
     let op = case _op of
           Abs.Plus -> Plus
@@ -366,6 +412,7 @@ genStmt (Abs.Block (s:ss)) = do
       local (const (fenv, venv')) comp
     Abs.Ret e -> do
       (t, v) <- genExp e
+      _ <- getFresh
       emit $ Ret (t, v)
       comp
     Abs.VRet -> do

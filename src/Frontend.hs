@@ -497,7 +497,8 @@ inferType e = do
       t2 <- inferType e2
       case (t1,t2,relOp) of
         (Int,Int,_) -> return Bool
-        (Bool,Bool,_) -> return Bool
+        (Bool,Bool,NE) -> return Bool
+        (Bool,Bool,EQU) -> return Bool
         _ -> throwError $ T.pack $ printf "error in %s: type mismatch during comparision (%s and %s) in %s" (show loc) (show t1) (show t2) (show e)
     EAnd e1 e2 -> do
       t1 <- inferType e1
@@ -578,6 +579,14 @@ checkExpr e = do
             GE  -> c $ n >= m
             EQU -> c $ n == m
             NE  -> c $ n /= m
+        (VBool b1, VBool b2) -> do
+          case op of
+            EQU -> c $ b1 == b2
+            NE -> c $ b1 /= b2
+        (VStr s1, VStr s2) -> do
+          case op of
+            EQU -> c $ s1 == s2
+            NE -> c $ s1 /= s2
     EAnd e1 e2 -> do
       r1 <- checkExpr e1
       r2 <- checkExpr e2
@@ -683,7 +692,7 @@ checkAll tree = do
     (typeCheck tree)
     (Ts.FunName (Ident "dummy"), builtins, Map.empty)
   newTree <- removeUnreachableCode tree
-  traceM $ printTree newTree
+--  traceM $ printTree newTree
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
   return newTreeWithRets
