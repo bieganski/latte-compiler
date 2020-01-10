@@ -1,0 +1,12 @@
+Name: lattester
+Version:	0.5.0
+Author:		Marcin Benke
+Build-Type:	Simple
+Cabal-Version:  >=1.2
+
+executable lattester
+  build-depends: 
+    base >= 4,
+    text,
+    shelly
+  main-is: Tester.hs
