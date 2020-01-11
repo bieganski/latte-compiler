@@ -119,7 +119,7 @@ genExp e = case e of
       VBool False -> return (TBool, VBool True)
       VReg n -> do
         fresh <- getFresh
-        emit $ Cmp (VReg fresh) NE TBool (VReg n) (VInt 0)
+        emit $ Cmp (VReg fresh) EQU TBool (VReg n) (VBool False)
         return (TBool, VReg fresh)
   Abs.EMul e1 _op e2 -> do
     (t1,v1) <- genExp e1
@@ -313,8 +313,8 @@ genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
         let venv' = Map.insert id (t,v) venv
         local (const (fenv, venv')) $ genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,v) res)
     Abs.BStmt (Abs.Block ss) -> do
-      (inner2, m2) <- genStmtEnhanced (Abs.Block ss) (inner, res)
-      genStmtEnhanced (Abs.Block stmts) (inner2, m2)
+      (_, m2) <- genStmtEnhanced (Abs.Block ss) (inner, res)
+      genStmtEnhanced (Abs.Block stmts) (inner, m2)
     Abs.Decr id -> do
       (t, val) <- doAdd id (-1)
       let venv' = Map.insert id (t, val) venv
@@ -332,8 +332,8 @@ genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
               genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,val) res)
       local (const (fenv, venv')) comp
     _ -> do
-      genStmt (Abs.Block (s:stmts))
-      return (inner, res)
+      genStmt $ Abs.Block [s]
+      genStmtEnhanced (Abs.Block stmts) (inner, res)
       
 
 
@@ -377,10 +377,10 @@ genStmt (Abs.Block (s:ss)) = do
       comp
     Abs.CondElse e s1 s2 -> do
       (TBool,v) <- genExp e
-      f <- getFresh
-      emit $ Cmp (VReg f) NE TBool v (VInt 0)
+      --f <- getFresh
+      --emit $ Cmp (VReg f) NE TBool v (VInt 0)
       trueLabel <- getFresh
-      let jump = \false -> BrCond (TBool, VReg f) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
+      let jump = \false -> BrCond (TBool, v) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
       (ins,n0,m0,b) <- get
       let AssCheck _ assigned1 = execState (varsAssigned s1) $ AssCheck [] []
       let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
@@ -470,6 +470,7 @@ constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal -
   (Abs.Ident, LLVMType, LLVMVal) -> GenM ((Abs.Ident, LLVMTypeVal), Instr) 
 constructPhi m1 m2 b1 b2 (id,t,v) = do
   f <- getFresh
+  traceM $ show m1
   let (_, v1) = m1 Map.! id
   let (_, v2) = m2 Map.! id
   return ((id, (t, VReg f)), Phi (VReg f) t [(v1, b1), (v2, b2)])

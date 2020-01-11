@@ -650,18 +650,45 @@ removeUnreachableBlock (Block (s:stmts)) = do
       v <- checkExpr e
       case v of
         CxtDep -> comp >>= f
-        VBool True -> undefined {- do
-          Block b <- comp
-          Block bb <- removeUnreachableBlock $ Block b1
-          return $ Block $ br1 : b -}
+        VBool True -> do
+          let AssCheck _ assigned = execState (varsAssigned br1) $ AssCheck [] []
+          Block b <- removeUnreachableBlock $ Block [br1]
+          Block res <- local (\e -> Map.union (Map.fromList $ zip assigned (repeat CxtDep)) e) comp
+          return $ Block $ b ++ res
         VBool False -> comp
     CondElse e br1 br2 -> do
       v <- checkExpr e
       case v of
-        CxtDep -> comp  >>= f
-        VBool True -> comp >>= \(Block b) -> return $ Block $ br1 : b
-        VBool False -> comp >>= \(Block b) -> return $ Block $ br2 : b
-    While e s1 -> comp >>= f
+        CxtDep -> do
+          let AssCheck _ ass1 = execState (varsAssigned br1) $ AssCheck [] []
+          let AssCheck _ ass2 = execState (varsAssigned br2) $ AssCheck [] []
+          Block [b1] <- removeUnreachableBlock $ Block [br1]
+          Block [b2] <- removeUnreachableBlock $ Block [br2]
+          let g = \as -> \e -> Map.union (Map.fromList $ zip as (repeat CxtDep)) e
+          Block res <- local (g (ass1 ++ ass2)) comp
+          return $ Block $ (CondElse e b1 b2) : res
+        VBool True -> do
+          let AssCheck _ ass1 = execState (varsAssigned br1) $ AssCheck [] []
+          Block b <- removeUnreachableBlock $ Block [br1]
+          let g = \as -> \e -> Map.union (Map.fromList $ zip as (repeat CxtDep)) e
+          Block res <- local (g ass1) comp
+          return $ Block $ b ++ res
+        VBool False -> do
+          let AssCheck _ ass2 = execState (varsAssigned br2) $ AssCheck [] []
+          Block b <- removeUnreachableBlock $ Block [br2]
+          let g = \as -> \e -> Map.union (Map.fromList $ zip as (repeat CxtDep)) e
+          Block res <- local (g ass2) comp
+          return $ Block $ b ++ res
+    While e s1 -> do
+      v <- checkExpr e
+      case v of
+        VBool False -> comp
+        _ -> do
+          let AssCheck _ ass1 = execState (varsAssigned s1) $ AssCheck [] []
+          Block [b] <- removeUnreachableBlock $ Block [s1]
+          let g = \as -> \e -> Map.union (Map.fromList $ zip as (repeat CxtDep)) e
+          Block res <- local (g ass1) comp
+          return $ Block $ (While e b) : res
     SExp e -> comp >>= f
 
 
@@ -695,7 +722,8 @@ checkAll tree = do
     (typeCheck tree)
     (Ts.FunName (Ident "dummy"), builtins, Map.empty)
   newTree <- removeUnreachableCode tree
---  traceM $ printTree newTree
+  -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
+  traceM $ printTree newTreeWithRets
   return newTreeWithRets
