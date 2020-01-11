@@ -1,2 +1,4 @@
 *.myout
-lol/
+*.ll
+*.bc
+*.res

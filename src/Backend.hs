@@ -346,8 +346,8 @@ genStmt (Abs.Block (s:ss)) = do
     Abs.Empty -> do
       comp
     Abs.BStmt b -> do
-      genStmt b
-      comp
+      (_, res) <- genStmtEnhanced b ([], Map.empty)
+      local (\(f, e) -> (f, Map.union res e)) comp
     Abs.Decl t items -> do
       env' <- foldM declChangeEnv env $ zip (repeat t) items
       local (const env') comp
@@ -470,7 +470,6 @@ constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal -
   (Abs.Ident, LLVMType, LLVMVal) -> GenM ((Abs.Ident, LLVMTypeVal), Instr) 
 constructPhi m1 m2 b1 b2 (id,t,v) = do
   f <- getFresh
-  traceM $ show m1
   let (_, v1) = m1 Map.! id
   let (_, v2) = m2 Map.! id
   return ((id, (t, VReg f)), Phi (VReg f) t [(v1, b1), (v2, b2)])

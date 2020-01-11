@@ -725,5 +725,5 @@ checkAll tree = do
   -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
-  traceM $ printTree newTreeWithRets
+  -- traceM $ printTree newTreeWithRets
   return newTreeWithRets
