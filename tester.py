@@ -37,7 +37,8 @@ def runFile(f):
         res_file_name =f[:-3] + "res"
         res_file = open(res_file_name, "w")
         output_file = f[:-3] + "output"
-        res1 = subprocess.run(f[:-4], stdout=res_file, stderr=subprocess.PIPE)
+        subprocess.run("pwd")
+        res1 = subprocess.run(["lli", f[:-4] + ".bc"], stdout=res_file, stderr=subprocess.PIPE)
         print(green)
         system("cat " + res_file_name)
         print(reset)

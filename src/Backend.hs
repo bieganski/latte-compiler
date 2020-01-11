@@ -85,34 +85,8 @@ addGlobStr s = do
     [] -> do
       put (ins,n,Map.insert glob s m,b)
       return $ VGlobStr $ toInteger $ Map.size m
-    [(VGlobStr num, _)] -> return $ VGlobStr num 
-
-
-inferType :: Abs.Expr -> GenM LLVMType
-inferType e = case e of
-    Abs.EVar id -> do
-      getVar id >>= return . fst
-    Abs.ELitInt _ -> return TInt
-    Abs.ELitTrue -> return TBool
-    Abs.ELitFalse -> return TBool 
-    Abs.EApp id exprs -> do
-      TFun ret _ <- getFunType id
-      return ret
-    Abs.EString _ -> return tstr
-    Abs.Neg e -> return TInt
-    Abs.Not e -> return TBool
-    Abs.EMul e1 _ e2 -> return TInt
-    Abs.EAdd e1 op e2 -> do
-      t1 <- inferType e1
-      t2 <- inferType e2
-      case (t1,t2) of
-        (TInt, TInt) -> return TInt
-        (TPtr TChar, TPtr TChar) -> return tstr
-        _ -> error "frontend internal error: add"
-    Abs.ERel e1 relOp e2 -> return TBool 
-    Abs.EAnd e1 e2 -> return TBool
-    Abs.EOr e1 e2 -> return TBool
-
+    [(VGlobStr num, _)] -> return $ VGlobStr num
+    
 
 genExp :: Abs.Expr -> GenM LLVMTypeVal
 genExp e = case e of
@@ -150,14 +124,17 @@ genExp e = case e of
   Abs.EMul e1 _op e2 -> do
     (t1,v1) <- genExp e1
     (t2,v2) <- genExp e2
-    case (v1,v2) of
-      (VInt n, VInt m) -> return (TInt, VInt $ n * m)
-      _ -> do
-        fresh <- getFresh
-        let op = case _op of
+    let op = case _op of
               Abs.Times -> Times
               Abs.Div   -> Div
               Abs.Mod   -> Mod
+    case (v1,v2) of
+      (VInt n, VInt m) -> case op of
+        Times -> return (TInt, VInt $ n * m)
+        Div -> return (TInt, VInt $ n `div` m)
+        Mod -> return (TInt, VInt $ n `mod` m)
+      _ -> do
+        fresh <- getFresh
         emit $ Bin (VReg fresh) op TInt v1 v2
         return (TInt, VReg fresh)
   Abs.ERel e1 _op e2 -> do
@@ -321,30 +298,6 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
 
 
 
-data AssignedCheck = AssCheck { inner :: [Abs.Ident], result :: [Abs.Ident] } 
-
--- list context variables (already existing), that are
--- assigned in given block (useful during PHI computation)
--- second argument is internal accumulator of block-declared ones,
--- thus call with empty list.
-varsAssigned :: Abs.Stmt -> State AssignedCheck ()
-varsAssigned s = do
-  AssCheck i r <- get
-  case s of
-    Abs.Decl _ items -> modify \st -> st {inner = inner st ++ map (^.Abs.iid) items}
-    Abs.Ass id _ -> case id `elem` i of
-      False -> modify \st -> st {result = id : (result st)}
-      True -> return ()
-    Abs.BStmt (Abs.Block stmts) -> forM_ stmts varsAssigned
-    Abs.Incr id -> case id `elem` i of
-      False -> modify \st -> st {result = id : (result st)}
-      True -> return () 
-    Abs.Decr id -> case id `elem` i of
-      False -> modify \st -> st {result = id : (result st)}
-      True -> return ()
-    _ -> return ()
-
-
 genStmtEnhanced :: Abs.Block -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
 genStmtEnhanced (Abs.Block []) st = return st
 genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
@@ -470,8 +423,7 @@ genStmt (Abs.Block (s:ss)) = do
       let mapUpdate = Map.fromList $ zip phiNodes $ zip ts $ map VReg [n0..]
       put ([],n0 + toInteger (length phiNodes),m0,be)
       (te, ve) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genExp e
-      vecmp <- getFresh
-      emit $ Cmp (VReg vecmp) NE TBool ve (VInt 0)
+      
       sLabel <- getFresh
       -- endLabel = ??
       (inse,ne,me,be_end) <- get
@@ -490,7 +442,7 @@ genStmt (Abs.Block (s:ss)) = do
       let phis = map snd _phis
       let newMap = Map.fromList $ map fst _phis
       (inss,ns,ms,bs_end) <- get
-      let ejump = BrCond (TBool, VReg vecmp) (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)
+      let ejump = BrCond (TBool, ve) (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)
       let allIns = concat [inss ++ (ejump:inse) ++ (reverse phis) ++ ins]
       put (allIns,ns,ms,endLabel)
       local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp

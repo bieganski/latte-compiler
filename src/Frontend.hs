@@ -22,7 +22,7 @@ import Data.List(elemIndex)
 import Control.Lens 
 import PrintLatte
 import Debug.Trace
-
+import Utils
 
 type EnvM e = ReaderT e (ExceptT T.Text IO)
 type StateM s = StateT s (ExceptT T.Text IO)
@@ -650,7 +650,10 @@ removeUnreachableBlock (Block (s:stmts)) = do
       v <- checkExpr e
       case v of
         CxtDep -> comp >>= f
-        VBool True -> comp >>= \(Block b) -> return $ Block $ br1 : b
+        VBool True -> undefined {- do
+          Block b <- comp
+          Block bb <- removeUnreachableBlock $ Block b1
+          return $ Block $ br1 : b -}
         VBool False -> comp
     CondElse e br1 br2 -> do
       v <- checkExpr e

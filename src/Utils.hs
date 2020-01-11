@@ -1,6 +1,11 @@
+{-# LANGUAGE BlockArguments #-}
+
 module Utils where
 
 import qualified Data.Text as T
+import qualified AbsLatte as Abs
+import Control.Monad.State
+import Control.Lens
 
 prolog :: String -> [String]
 prolog fname = ["source_filename = " ++ fname,
@@ -22,4 +27,28 @@ buildLines xs = T.intercalate (T.pack "\n") (map T.pack xs)
  
 buildCommaString :: [String] -> String 
 buildCommaString lst = T.unpack $ T.intercalate (T.pack ", ") $ map T.pack lst
+
+
+data AssignedCheck = AssCheck { inner :: [Abs.Ident], result :: [Abs.Ident] } 
+
+-- list context variables (already existing), that are
+-- assigned in given block (useful during PHI computation)
+-- second argument is internal accumulator of block-declared ones,
+-- thus call with empty list.
+varsAssigned :: Abs.Stmt -> State AssignedCheck ()
+varsAssigned s = do
+  AssCheck i r <- get
+  case s of
+    Abs.Decl _ items -> modify \st -> st {inner = inner st ++ map (^.Abs.iid) items}
+    Abs.Ass id _ -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return ()
+    Abs.BStmt (Abs.Block stmts) -> forM_ stmts varsAssigned
+    Abs.Incr id -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return () 
+    Abs.Decr id -> case id `elem` i of
+      False -> modify \st -> st {result = id : (result st)}
+      True -> return ()
+    _ -> return ()
 
