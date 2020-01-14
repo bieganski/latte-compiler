@@ -327,64 +327,179 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
   (_, v) <- genExp e
   return (fenv, Map.insert id (t, v) venv)
 
+debug = ([], Map.empty)
 
 -- returns changed variable env, because
 -- Reader's "local" function is not enough; sometimes we need to overwrite values from
 -- outer block
+-- inner - list of variables already declared in this block
+-- outer - map of locally changed outer variables
 genStmt :: Abs.Stmt -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
-genStmt s (inner, res) = undefined
+genStmt s (inner, outer) = do
+  fnv <- gets fenv
+  vnv <- gets venv
+  case s of
+    Abs.Decl t items -> do
+      let env = (fnv, vnv) 
+      (fnv', vnv') <- foldM declChangeEnv env $ zip (repeat t) items
+      modify \s -> s { fenv = fnv', venv = vnv'}
+      return (inner ++ map (^.Abs.iid) items, outer)
+    Abs.Ass id e -> case id `elem` inner of
+      True -> do
+        val <- genExp e
+        modify \s -> s { venv = Map.insert id val vnv }
+        return (inner, outer)
+      False -> do
+        val <- genExp e
+        let vnv' = Map.insert id val vnv
+        modify \s -> s { venv = Map.insert id val vnv }
+        return (inner, Map.insert id val outer)
+    Abs.BStmt b -> do
+      out <- genBlock b
+      modify \s -> s { venv = Map.union out vnv }
+      return (inner, Map.union out outer)
+    Abs.Decr id -> do
+      val <- doAdd id (-1)
+      let vnv' = Map.insert id val vnv
+      case id `elem` inner of
+        True -> do
+          modify \s -> s { venv = vnv' }
+          return (inner, outer)
+        False -> do
+          modify \s -> s { venv = vnv' }
+          return (inner, Map.insert id val outer)
+    Abs.Incr id -> do
+      val <- doAdd id 1
+      let vnv' = Map.insert id val vnv
+      case id `elem` inner of
+        True -> do
+          modify \s -> s { venv = vnv' }
+          return (inner, outer)
+        False -> do
+          modify \s -> s { venv = vnv' }
+          return (inner, Map.insert id val outer)
+    Abs.Empty -> return (inner, outer)
+    Abs.Ret e -> do
+      val <- genExp e
+      emit $ Ret val
+      return (inner, outer)
+    Abs.VRet -> do
+      emit $ Ret (TVoid, VDummy)
+      return (inner, outer)
+    Abs.SExp e -> do
+      val <- genExp e
+      return (inner, outer)
+    Abs.CondElse e s1 s2 -> do
+      (TBool,v) <- genExp e
+      trueLabel <- getFresh
+      falseLabel <- getFresh
+      endLabel <- getFresh
+      emit $ BrCond (TBool, v) (TLabel, VLabel trueLabel) (TLabel, VLabel falseLabel)
+
+      let AssCheck _ assigned1 = execState (varsAssigned s1) $ AssCheck [] []
+      let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
+      let phiNodes = LU.unique $ L.union assigned1 assigned2 -- outer vars changed in both branches
+      phiTvs <- mapM getVar phiNodes
+
+      emit $ Label $ VLabel $ toInteger trueLabel
+      modify \s -> s { currBlock = trueLabel }
+      (_, out1) <- genStmt s1 (inner, outer)
+      emit $ Br (TLabel, VLabel endLabel)
+      mm1 <- gets venv
+      modify \s -> s { venv = vnv}
+
+      emit $ Label $ VLabel $ toInteger falseLabel
+      modify \s -> s { currBlock = falseLabel }
+      (_, out2) <- genStmt s2 (inner, outer)
+      emit $ Br (TLabel, VLabel endLabel)
+      mm2 <- gets venv
+      modify \s -> s { venv = vnv}
+
+      case phiNodes == (Map.keys $ Map.union out1 out2) of
+        True -> return debug
+        False -> error "assertion error"
+      
+      _phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel trueLabel) (VLabel falseLabel) (id,t,v)) $ zip phiTvs phiNodes
+      let phiIns = map snd _phiIns
+      let phiMap = Map.fromList $ map fst _phiIns
+
+      forM_ phiIns emit
+
+      emit $ Label $ VLabel endLabel
+      modify \s -> s { currBlock = endLabel }
+      modify \s -> s { venv = Map.union phiMap vnv }
+
+      return (inner, Map.union phiMap outer)
+    Abs.Cond e s1 -> do
+      genStmt (Abs.CondElse e s1 Abs.Empty) (inner, outer)
+    Abs.While e s -> do
+      block0 <- gets currBlock
+      let AssCheck _ _phiNodes = execState (varsAssigned s) $ AssCheck [] []
+      let phiNodes = LU.unique $ _phiNodes
+      phiTvs <- mapM getVar phiNodes
+      let phiTs = map fst phiTvs
+      
+      startBlock <- getFresh
+      emit $ Br (TLabel, VLabel startBlock)
+      emit $ Label $ VLabel startBlock
+      updateBlockNum startBlock
+
+      iiStart <- gets ins
+      modify \s -> s { ins = [] }
+
+
+      let phiNum = length phiNodes
+      phiStartNum <- gets fresh -- without modifying anything
+      modify \s -> s { fresh = phiStartNum + (toInteger phiNum) }
+      
+      let phiMap = Map.fromList $ zip phiNodes $ zip phiTs $ map VReg [phiStartNum..]
+      traceM $ show phiMap
+      modify \s -> s { venv = Map.union phiMap vnv }
+      val <- genExp e
+      -- modify \s -> s { venv = vnv }
+      
+      iiE <- gets ins
+      modify \s -> s { ins = [] }
+
+      sLabel <- getFresh
+      updateBlockNum sLabel
+      emit $ Label $ VLabel sLabel
+      (_, out) <- genStmt s (inner, outer)
+      
+      -- modify \s -> s {venv = Map.union out vnv } TODO redundancja
+
+      emit $ Br (TLabel, VLabel startBlock)
+      iiS <- gets ins
+      sEndLabel <- gets currBlock
+
+      freshSave <- gets fresh
+      modify \s -> s { fresh = phiStartNum }
+      _phiIns <- mapM (\((t,v), id) -> constructPhi vnv out (VLabel block0) (VLabel sEndLabel) (id,t,v)) $ zip phiTvs phiNodes
+      modify \s -> s { fresh = freshSave }
+      
+      let phiIns = map snd _phiIns
+      let phiMap = Map.fromList $ map fst _phiIns
+
+      endLabel <- getFresh
+      let allIns = concat [iiS,
+                       [BrCond val (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)],
+                       iiE,
+                       reverse phiIns,
+                       iiStart]
+      modify \s -> s { ins = allIns, currBlock = endLabel, venv = Map.union phiMap vnv}
+      emit $ Label $ VLabel endLabel
+      return (inner, Map.union out outer) 
+      
+    
 {-
   do
   env@(fenv, venv) <- ask
   case s of
-    Abs.Decl t items -> do
-      env' <- foldM declChangeEnv env $ zip (repeat t) items
-      return (inner ++ map (^.Abs.iid) items, res)
-    Abs.Ass id e -> case id `elem` inner of
-      True -> do
-        val <- genExp e
-        return (fenv, Map.insert id val venv)
-      False -> do
-        (t,v) <- genExp e
-        let venv' = Map.insert id (t,v) venv
-        local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,v) res)
-    Abs.BStmt (Abs.Block ss) -> do
-      (_, m2) <- genStmt (Abs.Block ss) (inner, res)
-      local (const (fenv, Map.union m2 venv)) $ genStmt (Abs.Block stmts) (inner, Map.union m2 venv)
-    Abs.Decr id -> do
-      (t, val) <- doAdd id (-1)
-      let venv' = Map.insert id (t, val) venv
-      case id `elem` inner of
-            True -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, res)
-            False -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,val) res)
-    Abs.Incr id -> do
-      (t, val) <- doAdd id 1
-      let venv' = Map.insert id (t, val) venv
-      case id `elem` inner of
-            True -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, res)
-            False -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,val) res)
-
-    Abs.Empty -> genStmt (Abs.Block stmts) (inner, res)
-    Abs.Ret e -> do
-      (t, v) <- genExp e
-      _ <- getFresh
-      emit $ Ret (t, v)
-      genStmt (Abs.Block stmts) (inner, res)
-    Abs.VRet -> do
-      _ <- getFresh
-      emit $ Ret (TVoid, VDummy)
-      genStmt (Abs.Block stmts) (inner, res)
     Abs.SExp e -> do
       genExp e
       genStmt (Abs.Block stmts) (inner, res)
-    Abs.CondElse e s1 s2 -> do
-      (TBool,v) <- genExp e
-      trueLabel <- getFresh
-      let jump = \false -> BrCond (TBool, v) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
+    
       (ins,n0,m0,b) <- get
-      let AssCheck _ assigned1 = execState (varsAssigned s1) $ AssCheck [] []
-      let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
-      let phiNodes = LU.unique $ L.intersect assigned1 assigned2
       put ([],n0,m0,trueLabel) -- entering new block
       -- emit $ Comment $ "block " ++ (show trueLabel)
       emit $ Label $ VLabel trueLabel
@@ -546,6 +661,7 @@ emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   let comp = genBlock block >> emit FunEnd
   emit $ Label $ VLabel $ toInteger $ length args
   modify $ \s -> s{ fresh = toInteger (1 + (length args)), currBlock = toInteger $ length args, venv = createFunctionEnv args}
+  comp
   ii <- gets ins
   modify \s -> s {ins = fixEmptyBlock (mapType ret) ii}
 
