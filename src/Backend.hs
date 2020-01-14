@@ -396,43 +396,39 @@ genStmt s (inner, outer) = do
       endLabel <- getFresh
       emit $ BrCond (TBool, v) (TLabel, VLabel trueLabel) (TLabel, VLabel falseLabel)
 
-      let AssCheck _ assigned1 = execState (varsAssigned s1) $ AssCheck [] []
-      let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
-      let phiNodes = LU.unique $ L.union assigned1 assigned2 -- outer vars changed in both branches
-      phiTvs <- mapM getVar phiNodes
-
       emit $ Label $ VLabel $ toInteger trueLabel
       modify \s -> s { currBlock = trueLabel }
-      (_, out1) <- genStmt s1 (inner, outer)
+      genStmt s1 (inner, outer)
       emit $ Br (TLabel, VLabel endLabel)
       mm1 <- gets venv
       modify \s -> s { venv = vnv}
 
       emit $ Label $ VLabel $ toInteger falseLabel
       modify \s -> s { currBlock = falseLabel }
-      (_, out2) <- genStmt s2 (inner, outer)
+      genStmt s2 (inner, outer)
       emit $ Br (TLabel, VLabel endLabel)
       mm2 <- gets venv
       modify \s -> s { venv = vnv}
 
-      case phiNodes == (Map.keys $ Map.union out1 out2) of
-        True -> return debug
-        False -> error "assertion error"
+      let AssCheck _ ass1 = execState (varsAssigned s1) (AssCheck [] [])
+      let AssCheck _ ass2 = execState (varsAssigned s2) (AssCheck [] [])
+      let phiNodes = LU.unique $ L.union ass1 ass2
+      phiTvs <- mapM getVar phiNodes
       
       _phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel trueLabel) (VLabel falseLabel) (id,t,v)) $ zip phiTvs phiNodes
       let phiIns = map snd _phiIns
       let phiMap = Map.fromList $ map fst _phiIns
 
-      forM_ phiIns emit
-
       emit $ Label $ VLabel endLabel
+      forM_ phiIns emit
+      
       modify \s -> s { currBlock = endLabel }
       modify \s -> s { venv = Map.union phiMap vnv }
-
+      
       return (inner, Map.union phiMap outer)
     Abs.Cond e s1 -> do
       genStmt (Abs.CondElse e s1 Abs.Empty) (inner, outer)
-    Abs.While e s -> do
+    Abs.While e s@(Abs.BStmt _) -> do
       block0 <- gets currBlock
       let AssCheck _ _phiNodes = execState (varsAssigned s) $ AssCheck [] []
       let phiNodes = LU.unique $ _phiNodes
@@ -463,22 +459,20 @@ genStmt s (inner, outer) = do
       sLabel <- getFresh
       updateBlockNum sLabel
       emit $ Label $ VLabel sLabel
-      (_, out) <- genStmt s (inner, outer)
+      genStmt s (inner, outer)
+      mm <- gets venv
       
-      -- modify \s -> s {venv = Map.union out vnv } TODO redundancja
-
       emit $ Br (TLabel, VLabel startBlock)
       iiS <- gets ins
       sEndLabel <- gets currBlock
 
       freshSave <- gets fresh
       modify \s -> s { fresh = phiStartNum }
-      _phiIns <- mapM (\((t,v), id) -> constructPhi vnv out (VLabel block0) (VLabel sEndLabel) (id,t,v)) $ zip phiTvs phiNodes
+      _phiIns <- mapM (\((t,v), id) -> constructPhi vnv mm (VLabel block0) (VLabel sEndLabel) (id,t,v)) $ zip phiTvs phiNodes
       modify \s -> s { fresh = freshSave }
       
       let phiIns = map snd _phiIns
       let phiMap = Map.fromList $ map fst _phiIns
-
       endLabel <- getFresh
       let allIns = concat [iiS,
                        [BrCond val (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)],
@@ -487,8 +481,10 @@ genStmt s (inner, outer) = do
                        iiStart]
       modify \s -> s { ins = allIns, currBlock = endLabel, venv = Map.union phiMap vnv}
       emit $ Label $ VLabel endLabel
-      return (inner, Map.union out outer) 
-      
+      return (inner, Map.unions [phiMap, outer])
+    Abs.While e s -> genStmt (Abs.While e (Abs.BStmt (Abs.Block [s]))) (inner, outer)
+
+
 prefix :: Eq a => [a] -> [a] -> Bool 
 prefix [] _ = True
 prefix (y:ys) (x:xs)  
