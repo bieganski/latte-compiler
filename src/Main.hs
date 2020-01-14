@@ -50,7 +50,7 @@ run v fp s = do
                  let res2 = runBackend fp newTree
                  case res2 of
                    Right t -> do
-                     hPutStrLn stderr $ "OK\n" ++ T.unpack t -- TODO
+                     hPutStrLn stderr $ "OK"
                      writeFile outFile $ T.unpack t
                    Left t -> do
                      hPutStrLn stderr $ "ERROR"
