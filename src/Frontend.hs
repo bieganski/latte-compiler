@@ -700,10 +700,8 @@ removeUnreachable (FnDef ret id args b) = do
   return $ FnDef ret id args b'
   
 
-
 removeUnreachableCode :: Program -> ExceptT T.Text IO Program
 removeUnreachableCode (Program topDefs) = runReaderT (forM topDefs removeUnreachable >>= \defs -> return $ Program defs) Map.empty
-
 
 
 checkAll :: Program -> ExceptT T.Text IO Program
@@ -725,5 +723,5 @@ checkAll tree = do
   -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
-  traceM $ printTree newTreeWithRets
+  -- traceM $ printTree newTreeWithRets
   return newTreeWithRets

@@ -52,6 +52,7 @@ def runFile(f):
         print(res.stdout.decode("utf-8"))
     
     print(reset)
+    return False
     a = input("Press Enter to continue, q to quit...\n")
     if 'q' in a:
         return True

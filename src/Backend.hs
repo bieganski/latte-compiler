@@ -453,10 +453,9 @@ genStmt s (inner, outer) = do
       modify \s -> s { fresh = phiStartNum + (toInteger phiNum) }
       
       let phiMap = Map.fromList $ zip phiNodes $ zip phiTs $ map VReg [phiStartNum..]
-      traceM $ show phiMap
+      
       modify \s -> s { venv = Map.union phiMap vnv }
       val <- genExp e
-      -- modify \s -> s { venv = vnv }
       
       iiE <- gets ins
       modify \s -> s { ins = [] }
@@ -490,91 +489,6 @@ genStmt s (inner, outer) = do
       emit $ Label $ VLabel endLabel
       return (inner, Map.union out outer) 
       
-    
-{-
-  do
-  env@(fenv, venv) <- ask
-  case s of
-    Abs.SExp e -> do
-      genExp e
-      genStmt (Abs.Block stmts) (inner, res)
-    
-      (ins,n0,m0,b) <- get
-      put ([],n0,m0,trueLabel) -- entering new block
-      -- emit $ Comment $ "block " ++ (show trueLabel)
-      emit $ Label $ VLabel trueLabel
-      traceM $ show $ "s1: --- " ++ (show s1)
-      (_, mm1) <- genStmt (Abs.Block [s1]) ([], Map.empty)
-      falseLabel <- getFresh
-      (s1ins,n1,m1,s1b) <- get
-      put ([],n1,m1,falseLabel)
-      emit $ Label $ VLabel falseLabel
-      -- emit $ Comment $ "block " ++ (show falseLabel)
-      traceM $ show $ "s2: --- " ++ (show s2)
-      (_, mm2) <- genStmt (Abs.Block [s2]) ([], Map.empty)
-      finishLabel <- getFresh
-      (s2ins,n2,m2,s2b) <- get
-      let allIns = concat [[jump falseLabel],
-                           reverse s1ins,
-                           [Br (TLabel, VLabel finishLabel)],
-                           reverse s2ins,
-                           [Br (TLabel, VLabel finishLabel)]]
-      
-      tvs <- mapM getVar phiNodes
-      _phiIns <- mapM (\((t,v), id) -> constructPhi mm1 mm2 (VLabel s1b) (VLabel s2b) (id,t,v)) $ zip tvs phiNodes
-      let phiIns = map snd _phiIns
-      let newMap = Map.fromList $ map fst _phiIns
-      put ((reverse phiIns) ++ (reverse allIns) ++ ins,n2,m2,finishLabel)
-      emit $ Label $ VLabel finishLabel
-      -- emit $ Comment $ "block " ++ (show finishLabel)
-      let comp = genStmt (Abs.Block stmts) (inner, Map.union newMap res)
-      traceM $ "OoOOmg " ++ (show stmts)
-      local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
-    Abs.Cond e s1 -> do
-      genStmt (Abs.Block [Abs.CondElse e s1 Abs.Empty]) (inner, res)
-    Abs.While e s -> do
-      let AssCheck _ _phiNodes = execState (varsAssigned s) $ AssCheck [] []
-      let phiNodes = LU.unique $ _phiNodes
-      (_,_,_,startb) <- get
-      be <- getFresh
-      emit $ Br (TLabel, VLabel be)
-      emit $ Label $ VLabel be
-      -- emit $ Comment $ "block" ++ (show be)
-      (ins,n0,m0,b) <- get
-      let ts = map fst $ map (\id -> venv Map.! id) phiNodes   
-      let mapUpdate = Map.fromList $ zip phiNodes $ zip ts $ map VReg [n0..]
-      put ([],n0 + toInteger (length phiNodes),m0,be)
-      (te, ve) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genExp e
-      
-      sLabel <- getFresh
-      -- endLabel = ??
-      (inse,ne,me,be_end) <- get
-      put ([],ne,me,sLabel)
-      emit $ Label $ VLabel sLabel
-      -- emit $ Comment $ "block" ++ (show sLabel)
-      (_, svenv) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genStmt (Abs.Block [s]) ([], Map.empty)
-      (_,_,_,bs_end) <- get
-      endLabel <- getFresh
-      emit $ Br (TLabel, VLabel be)
-      emit $ Label $ VLabel endLabel
-      -- emit $ Comment $ "block " ++ (show endLabel)
-      tvs <- mapM getVar phiNodes
-      (itmp,ntmp,mtmp,btmp) <- get
-      put (itmp,n0,mtmp,btmp)
-      _phis <- mapM (\((t,v), id) -> constructPhi svenv venv (VLabel bs_end) (VLabel startb) (id,t,v)) $ zip tvs phiNodes
-      put (itmp,ntmp,mtmp,btmp)
-      let phis = map snd _phis
-      let newMap = Map.fromList $ map fst _phis
-      (inss,ns,ms,bs_end) <- get
-      let ejump = BrCond (TBool, ve) (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)
-      let allIns = concat [inss ++ (ejump:inse) ++ (reverse phis) ++ ins]
-      put (allIns,ns,ms,endLabel)
-      let comp = genStmt (Abs.Block stmts) (inner, res)
-      local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
-
--}    
-    
-
 prefix :: Eq a => [a] -> [a] -> Bool 
 prefix [] _ = True
 prefix (y:ys) (x:xs)  
