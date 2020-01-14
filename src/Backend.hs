@@ -40,27 +40,27 @@ absTypeToLLVM t = case t of
 
 getFresh :: GenM Integer
 getFresh = do
-  (_,num,_,_) <- get
-  modify \(c, n, m, b) -> (c, n+1, m, b)
-  return num
+  f <- gets fresh
+  modify $ \s -> s {fresh = f + 1}
+  return f
 
+type VarEnv = Map.Map Abs.Ident LLVMTypeVal
 
-
-type GenE = (FuncEnv,
-             Map.Map Abs.Ident LLVMTypeVal)
--- function env and variable env
-
-type GenS = ([Instr],
-             Integer,
-             Map.Map LLVMVal String,
-             Integer)
 -- (code generated,
 -- num of fresh variable,
 -- Map for global string literals)
 -- number of current block
+-- function env
+-- variable env (per block)
+data GenS = GenS {ins :: [Instr],
+                 fresh :: Integer,
+                 lits :: Map.Map LLVMVal String,
+                 currBlock :: Integer,
+                 fenv :: FuncEnv,
+                 venv :: VarEnv}
 
-type GenM = ReaderT GenE (StateT GenS (Except T.Text))
 
+type GenM = StateT GenS (Except T.Text)
 
 instance MonadFail Identity where
     fail :: String -> m a
@@ -68,22 +68,22 @@ instance MonadFail Identity where
 
 getVar :: Abs.Ident -> GenM LLVMTypeVal
 getVar id = do
-  (_, m) <- ask
+  m <- gets venv
   return $ m Map.! id
 
 getFunType :: Abs.Ident -> GenM LLVMType
 getFunType id = do
-  (m, _) <- ask
+  m <- gets fenv
   return $ m Map.! id
 
 
 addGlobStr :: String -> GenM LLVMVal
 addGlobStr s = do
-  (ins,n,m,b) <- get
+  m <- gets lits
   let glob = VGlobStr $ toInteger $ Map.size m
   case take 1 $ Map.toList $ Map.filter (==s) m of
     [] -> do
-      put (ins,n,Map.insert glob s m,b)
+      modify $ \st -> st {lits = Map.insert glob s m}
       return $ VGlobStr $ toInteger $ Map.size m
     [(VGlobStr num, _)] -> return $ VGlobStr num
     
@@ -165,7 +165,7 @@ genExp e = case e of
           return (TBool, (VReg f))
       (_,_) -> case (v1, v2) of
         (VGlobStr s1num, VGlobStr s2num) -> do
-          (_,_,m,_) <- get
+          m <- gets lits
           let s1 = m Map.! (VReg s1num)
           let s2 = m Map.! (VReg s2num)
           case op of
@@ -184,10 +184,15 @@ genExp e = case e of
     (t2,v2) <- genExp e2
     case (t1, t2) of
       (TInt, TInt) -> do
-        f <- getFresh
-        emit $ Bin (VReg f) op TInt v1 v2
-        return (TInt, VReg f)
-      (TPtr TChar, TPtr TChar) -> concatStrings (t1,v1) (t2,v2)
+        case (v1,v2) of
+          (VInt n, VInt m) -> case op of
+            Plus -> return (TInt, VInt $ n + m)
+            Minus -> return (TInt, VInt $ n - m)
+          _ -> do
+            f <- getFresh
+            emit $ Bin (VReg f) op TInt v1 v2
+            return (TInt, VReg f)
+      (_,_) -> concatStrings (t1,v1) (t2,v2)
   Abs.EAnd e1 e2 -> do
     (_, v1) <- genExp e1
     case v1 of
@@ -200,18 +205,40 @@ genExp e = case e of
       VBool True -> return (TBool, VBool True)
       VBool False -> genExp e2
       VReg _ -> jumpAndOr e2 v1 EQU
-      
 
+updateBlockNum :: Integer -> GenM ()
+updateBlockNum num = modify $ \s -> s {currBlock = num}
+
+jumpAndOr :: Abs.Expr -> LLVMVal -> RelOp -> GenM LLVMTypeVal
+jumpAndOr e2 v1 op = do
+  startBlock <- gets currBlock
+  f <- getFresh
+  emit $ Cmp (VReg f) op TBool v1 (VInt 0)
+  br1 <- getFresh
+  br2 <- getFresh
+  emit $ BrCond (TBool, VReg f) (TLabel, VLabel br1) (TLabel, VLabel br2)
+  emit $ Label $ VLabel $ toInteger br1
+  updateBlockNum br1
+  (_, v2) <- genExp e2
+  emit $ Br (TLabel, VLabel br2)
+  emit $ Label $ VLabel $ toInteger br2
+  updateBlockNum br2
+  res <- getFresh
+  emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel br1)]
+  return (TBool, VReg res)
+
+{-
 jumpAndOr :: Abs.Expr -> LLVMVal -> RelOp -> GenM LLVMTypeVal
 jumpAndOr e2 v1 op = do
         f <- getFresh
         emit $ Cmp (VReg f) op TBool v1 (VInt 0)
-        (ins,n,m,blockNum) <- get
+        GenM ins n m blockNum _ _ <- get
         branch1 <- getFresh
         -- branch2 <- getFresh // we cannot do that, because register numbers must be +1 each
         let cond = \b2 -> BrCond (TBool, VReg f) (TLabel, VLabel branch1) (TLabel, VLabel b2)
         put ([],n+1,m,branch1) -- entering new block
-        emit $ Comment $ "im in block " ++ (show branch1)
+        -- emit $ Comment $ "im in block " ++ (show branch1)
+        emit $ Label $ VLabel $ toInteger $ branch1
         (_, v2) <- genExp e2 -- during that, new instructions were added
         (e2ins,_,_,r) <- get -- these are new ones (cause we started with [] list)
         branch2 <- getFresh
@@ -220,10 +247,13 @@ jumpAndOr e2 v1 op = do
                              [Br (TLabel, VLabel branch2)]] -- in proper order
         (_,n,m,b) <- get
         put (reverse $ (reverse ins) ++ allIns,n,m,branch2)
-        emit $ Comment $ "im in block " ++ (show branch2)
+        emit $ Label $ VLabel $ toInteger $ branch2
+        -- emit $ Comment $ "im in block " ++ (show branch2)
         res <- getFresh
         emit $ Phi (VReg res) TBool [(v1, VLabel blockNum), (v2, VLabel r)]
         return (TBool, VReg res)
+-}
+
 
 tstr = TPtr TChar
 
@@ -261,14 +291,15 @@ genStrDecl = \((VGlobStr n), s) -> flip GlobStrDecl s $ VGlobStr $ toInteger $ n
 
 emitGlobalStrDecls :: GenM ()
 emitGlobalStrDecls = do
-  (ins,n,m,b) <- get
-  let ins2 = ins ++ (reverse $ map genStrDecl $ Map.toList m)
-  put (ins2,n,m,b)
+  ii <- gets ins
+  m <- gets lits
+  let ins2 = ii ++ (reverse $ map genStrDecl $ Map.toList m)
+  modify $ \s -> s {ins = ins2}
 
 emit :: Instr -> GenM ()
 emit i = do
-  (ins,n,m,b) <- get
-  put (i:ins,n,m,b)
+  ii <- gets ins
+  modify $ \s -> s {ins = i:ii}
 
 -- STATEMENTS GENERATION -------------
 
@@ -287,7 +318,7 @@ defaultVal t = case t of
   TBool -> VBool False
   TVoid -> VVoid
 
-declChangeEnv :: GenE -> (Abs.Type, Abs.Item) -> GenM GenE
+declChangeEnv :: (FuncEnv, VarEnv) -> (Abs.Type, Abs.Item) -> GenM (FuncEnv, VarEnv)
 declChangeEnv (fenv,venv) (t, (Abs.NoInit id)) = do
   let val = defaultVal $ mapType t 
   return (fenv, Map.insert id (mapType t, val) venv)
@@ -297,88 +328,57 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
   return (fenv, Map.insert id (t, v) venv)
 
 
-
-genStmtEnhanced :: Abs.Block -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
-genStmtEnhanced (Abs.Block []) st = return st
-genStmtEnhanced (Abs.Block (s:stmts)) (inner, res) = do
+-- returns changed variable env, because
+-- Reader's "local" function is not enough; sometimes we need to overwrite values from
+-- outer block
+genStmt :: Abs.Stmt -> ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal) -> GenM ([Abs.Ident], Map.Map Abs.Ident LLVMTypeVal)
+genStmt s (inner, res) = undefined
+{-
+  do
   env@(fenv, venv) <- ask
   case s of
     Abs.Decl t items -> do
       env' <- foldM declChangeEnv env $ zip (repeat t) items
-      local (const env') $ genStmtEnhanced (Abs.Block stmts) (inner ++ map (^.Abs.iid) items, res)
+      return (inner ++ map (^.Abs.iid) items, res)
     Abs.Ass id e -> case id `elem` inner of
-      True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
+      True -> do
+        val <- genExp e
+        return (fenv, Map.insert id val venv)
       False -> do
         (t,v) <- genExp e
         let venv' = Map.insert id (t,v) venv
-        local (const (fenv, venv')) $ genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,v) res)
+        local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,v) res)
     Abs.BStmt (Abs.Block ss) -> do
-      (_, m2) <- genStmtEnhanced (Abs.Block ss) (inner, res)
-      genStmtEnhanced (Abs.Block stmts) (inner, m2)
+      (_, m2) <- genStmt (Abs.Block ss) (inner, res)
+      local (const (fenv, Map.union m2 venv)) $ genStmt (Abs.Block stmts) (inner, Map.union m2 venv)
     Abs.Decr id -> do
       (t, val) <- doAdd id (-1)
       let venv' = Map.insert id (t, val) venv
-      let comp = case id `elem` inner of
-            True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
-            False -> do
-              genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,val) res)
-      local (const (fenv, venv')) comp
+      case id `elem` inner of
+            True -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, res)
+            False -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,val) res)
     Abs.Incr id -> do
       (t, val) <- doAdd id 1
       let venv' = Map.insert id (t, val) venv
-      let comp = case id `elem` inner of
-            True -> genStmtEnhanced (Abs.Block stmts) (inner, res)
-            False -> do
-              genStmtEnhanced (Abs.Block stmts) (inner, Map.insert id (t,val) res)
-      local (const (fenv, venv')) comp
-    _ -> do
-      genStmt $ Abs.Block [s]
-      genStmtEnhanced (Abs.Block stmts) (inner, res)
-      
+      case id `elem` inner of
+            True -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, res)
+            False -> local (const (fenv, venv')) $ genStmt (Abs.Block stmts) (inner, Map.insert id (t,val) res)
 
-
-genStmt :: Abs.Block -> GenM ()
-genStmt (Abs.Block []) = return ()
-genStmt (Abs.Block (s:ss)) = do
-  let comp = genStmt (Abs.Block ss)
-  env@(fenv, venv) <- ask
-  case s of
-    Abs.Empty -> do
-      comp
-    Abs.BStmt b -> do
-      (_, res) <- genStmtEnhanced b ([], Map.empty)
-      local (\(f, e) -> (f, Map.union res e)) comp
-    Abs.Decl t items -> do
-      env' <- foldM declChangeEnv env $ zip (repeat t) items
-      local (const env') comp
-    Abs.Ass id e -> do
-      (t,v) <- genExp e
-      let venv' = Map.insert id (t,v) venv
-      local (const (fenv, venv')) comp
-    Abs.Incr id -> do
-      (t, val) <- doAdd id 1
-      let venv' = Map.insert id (t, val) venv
-      local (const (fenv, venv')) comp
-    Abs.Decr id -> do
-      (t, val) <- doAdd id (-1)
-      let venv' = Map.insert id (t, val) venv
-      local (const (fenv, venv')) comp
+    Abs.Empty -> genStmt (Abs.Block stmts) (inner, res)
     Abs.Ret e -> do
       (t, v) <- genExp e
       _ <- getFresh
       emit $ Ret (t, v)
-      comp
+      genStmt (Abs.Block stmts) (inner, res)
     Abs.VRet -> do
       _ <- getFresh
       emit $ Ret (TVoid, VDummy)
-      comp
+      genStmt (Abs.Block stmts) (inner, res)
     Abs.SExp e -> do
       genExp e
-      comp
+      genStmt (Abs.Block stmts) (inner, res)
     Abs.CondElse e s1 s2 -> do
       (TBool,v) <- genExp e
-      --f <- getFresh
-      --emit $ Cmp (VReg f) NE TBool v (VInt 0)
       trueLabel <- getFresh
       let jump = \false -> BrCond (TBool, v) (TLabel, VLabel trueLabel) (TLabel, VLabel false)
       (ins,n0,m0,b) <- get
@@ -386,13 +386,17 @@ genStmt (Abs.Block (s:ss)) = do
       let AssCheck _ assigned2 = execState (varsAssigned s2) $ AssCheck [] []
       let phiNodes = LU.unique $ L.intersect assigned1 assigned2
       put ([],n0,m0,trueLabel) -- entering new block
-      emit $ Comment $ "block " ++ (show trueLabel)
-      (_, mm1) <- genStmtEnhanced (Abs.Block [s1]) ([], Map.empty)
+      -- emit $ Comment $ "block " ++ (show trueLabel)
+      emit $ Label $ VLabel trueLabel
+      traceM $ show $ "s1: --- " ++ (show s1)
+      (_, mm1) <- genStmt (Abs.Block [s1]) ([], Map.empty)
       falseLabel <- getFresh
       (s1ins,n1,m1,s1b) <- get
       put ([],n1,m1,falseLabel)
-      emit $ Comment $ "block " ++ (show falseLabel)
-      (_, mm2) <- genStmtEnhanced (Abs.Block [s2]) ([], Map.empty)
+      emit $ Label $ VLabel falseLabel
+      -- emit $ Comment $ "block " ++ (show falseLabel)
+      traceM $ show $ "s2: --- " ++ (show s2)
+      (_, mm2) <- genStmt (Abs.Block [s2]) ([], Map.empty)
       finishLabel <- getFresh
       (s2ins,n2,m2,s2b) <- get
       let allIns = concat [[jump falseLabel],
@@ -406,18 +410,21 @@ genStmt (Abs.Block (s:ss)) = do
       let phiIns = map snd _phiIns
       let newMap = Map.fromList $ map fst _phiIns
       put ((reverse phiIns) ++ (reverse allIns) ++ ins,n2,m2,finishLabel)
-      emit $ Comment $ "block " ++ (show finishLabel)
+      emit $ Label $ VLabel finishLabel
+      -- emit $ Comment $ "block " ++ (show finishLabel)
+      let comp = genStmt (Abs.Block stmts) (inner, Map.union newMap res)
+      traceM $ "OoOOmg " ++ (show stmts)
       local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
     Abs.Cond e s1 -> do
-      genStmt $ (Abs.Block [Abs.CondElse e s1 Abs.Empty])
-      comp
+      genStmt (Abs.Block [Abs.CondElse e s1 Abs.Empty]) (inner, res)
     Abs.While e s -> do
       let AssCheck _ _phiNodes = execState (varsAssigned s) $ AssCheck [] []
       let phiNodes = LU.unique $ _phiNodes
       (_,_,_,startb) <- get
       be <- getFresh
       emit $ Br (TLabel, VLabel be)
-      emit $ Comment $ "block" ++ (show be)
+      emit $ Label $ VLabel be
+      -- emit $ Comment $ "block" ++ (show be)
       (ins,n0,m0,b) <- get
       let ts = map fst $ map (\id -> venv Map.! id) phiNodes   
       let mapUpdate = Map.fromList $ zip phiNodes $ zip ts $ map VReg [n0..]
@@ -428,12 +435,14 @@ genStmt (Abs.Block (s:ss)) = do
       -- endLabel = ??
       (inse,ne,me,be_end) <- get
       put ([],ne,me,sLabel)
-      emit $ Comment $ "block" ++ (show sLabel)
-      (_, svenv) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genStmtEnhanced (Abs.Block [s]) ([], Map.empty)
+      emit $ Label $ VLabel sLabel
+      -- emit $ Comment $ "block" ++ (show sLabel)
+      (_, svenv) <- local (\(f,v) -> (f, Map.union mapUpdate v)) $ genStmt (Abs.Block [s]) ([], Map.empty)
       (_,_,_,bs_end) <- get
       endLabel <- getFresh
       emit $ Br (TLabel, VLabel be)
-      emit $ Comment $ "block " ++ (show endLabel)
+      emit $ Label $ VLabel endLabel
+      -- emit $ Comment $ "block " ++ (show endLabel)
       tvs <- mapM getVar phiNodes
       (itmp,ntmp,mtmp,btmp) <- get
       put (itmp,n0,mtmp,btmp)
@@ -445,8 +454,11 @@ genStmt (Abs.Block (s:ss)) = do
       let ejump = BrCond (TBool, ve) (TLabel, VLabel sLabel) (TLabel, VLabel endLabel)
       let allIns = concat [inss ++ (ejump:inse) ++ (reverse phis) ++ ins]
       put (allIns,ns,ms,endLabel)
+      let comp = genStmt (Abs.Block stmts) (inner, res)
       local (\(fenv, venv) -> (fenv, Map.union newMap venv)) comp
 
+-}    
+    
 
 prefix :: Eq a => [a] -> [a] -> Bool 
 prefix [] _ = True
@@ -461,7 +473,7 @@ def t = case t of
   TInt -> VInt 0
 
 fixEmptyBlock :: LLVMType -> [Instr] -> [Instr]
-fixEmptyBlock rett (FunEnd:((Comment s):rest)) = (FunEnd:(a:((Comment s):rest)))
+fixEmptyBlock rett (FunEnd:((Label l):rest)) = (FunEnd:(a:((Label l):rest)))
   where a = Ret (rett, def rett)
 fixEmptyBlock _ a = a
 
@@ -477,8 +489,8 @@ constructPhi m1 m2 b1 b2 (id,t,v) = do
 
 doAdd :: Abs.Ident -> Integer -> GenM LLVMTypeVal
 doAdd id x = do
-  (fenv,venv) <- ask
-  let (t, v) = venv Map.! id
+  vnv <- gets venv
+  let (t, v) = vnv Map.! id
   case v of
     VInt n -> do
       return (t, VInt $ n + x)
@@ -493,11 +505,8 @@ t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f top
   f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
 
 
-e0 :: Abs.Program -> GenE
-e0 p = (t0 p, Map.empty)
-      
-s0 :: GenS
-s0 = ([], 1, Map.singleton (VGlobStr 0) "", 1)
+s0 :: Abs.Program -> GenS
+s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
@@ -517,32 +526,37 @@ buildIR filename content = buildText [buildLines $ prolog (show filename),
                                       content,
                                       buildLines epilog]
 
-
 runGenM :: Abs.Program -> GenM a -> Except T.Text a
-runGenM p comp = evalStateT (runReaderT comp (e0 p)) s0
+runGenM p comp = evalStateT comp $ s0 p
 
 createFunctionEnv :: [Abs.Arg] -> Map.Map Abs.Ident LLVMTypeVal
 createFunctionEnv args = Map.fromList $ map f (zip [0..] args)
   where f = \(num, (Abs.Arg t id)) -> (id, (mapType t,VReg num))
 
+
+genBlock :: Abs.Block -> GenM (Map.Map Abs.Ident LLVMTypeVal)
+genBlock (Abs.Block ss) = do
+  let comp = \(inner, outer) -> \s -> genStmt s (inner, outer)
+  (_, res) <- foldM comp ([], Map.empty) ss
+  return res
+
 emitTopDefIR :: Abs.TopDef -> GenM ()
 emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
-  let comp = genStmt block >> emit FunEnd
-  (ins,_,m,_) <- get
-  put (ins, toInteger (1 + (length args)), m, toInteger $ length args)
-  flip local comp $ \(fenv, _) -> (fenv, createFunctionEnv args)
-  (ins2,n,m,b) <- get
-  put (fixEmptyBlock (mapType ret) ins2,n,m,b)
-  
+  let comp = genBlock block >> emit FunEnd
+  emit $ Label $ VLabel $ toInteger $ length args
+  modify $ \s -> s{ fresh = toInteger (1 + (length args)), currBlock = toInteger $ length args, venv = createFunctionEnv args}
+  ii <- gets ins
+  modify \s -> s {ins = fixEmptyBlock (mapType ret) ii}
+
 
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp (Abs.Program topDefs) = do
   forM_ topDefs emitTopDefIR
   emitGlobalStrDecls
-  (ins,_,_,_) <- get
+  ii <- gets ins
   let decls = map (\(Abs.Ident a, b) -> Declare a b) $ Map.toList builtInFunctions
-  let content = buildLines $ map show $ decls ++ (reverse ins)
+  let content = buildLines $ map show $ decls ++ (reverse ii)
   return $ buildIR fp content
   
 runBackend :: FilePath -> Abs.Program -> Either T.Text T.Text

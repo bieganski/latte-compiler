@@ -81,8 +81,8 @@ instance Show LLVMVal where
     VBool b -> if b == True then "true" else "false"
     VVoid -> "void"
     VGlobStr n -> "@str." ++ show n
-    VLabel n -> "%" ++ show n
-    VReg n -> "%" ++ show n
+    VLabel n -> "L." ++ show n
+    VReg n -> "%R." ++ show n
     VDummy -> ""
 
 
@@ -102,11 +102,12 @@ data Instr =
   | Br LLVMTypeVal
   | Phi LLVMVal LLVMType [(LLVMVal, LLVMVal)]
   | Comment String
+  | Label LLVMVal
   deriving (Eq, Ord)
 
 instance Show Instr where
   show i = case i of
-    FunEntry s (TFun ret args) -> "\ndefine " ++ (show ret) ++ "@" ++ s ++ "(" ++ (buildCommaString (map show args)) ++ ") {"
+    FunEntry s (TFun ret args) -> "\ndefine " ++ (show ret) ++ "@" ++ s ++ "(" ++ (buildCommaString $ map showtv $ zip args $ map VReg [0..]) ++ ") {"
     FunEnd -> "}"
     GlobStrDecl n s -> (show n) ++ " = private unnamed_addr constant " ++ (show (TArr (toInteger (1 + (length s))) TChar)) ++ " c\"" ++ s ++ "\\00\", align 1" 
     Bin r op t v1 v2 -> (show r) ++ " = " ++ (show op) ++ " " ++ (show t) ++ " " ++ (show v1)  ++ ", " ++ (show v2)
@@ -116,14 +117,17 @@ instance Show Instr where
     FunCall r@(VReg _) t id args -> (show r) ++ " = call " ++ (show t) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv  args)) ++ ")"
     FunCall VVoid TVoid id args -> "call " ++ (show VVoid) ++ " @" ++ id ++ "(" ++ (buildCommaString (map showtv args)) ++ ")"
     Declare funName (TFun ret args) -> "declare " ++ (show ret) ++ " @" ++ funName ++ "(" ++ (buildCommaString (map show args)) ++ ")"
-    BrCond a@(condt, condv) b@(TLabel, l1V) c@(TLabel, l2v) -> "br " ++ (buildCommaString (map showtv [a,b,c]))
-    Br (t,v) -> "br " ++ (show t) ++ " " ++ (show v)
+    BrCond a@(condt, condv) b@(TLabel, l1V) c@(TLabel, l2v) -> "br " ++ (showtv a) ++ ", " ++ (buildCommaString (map showLab [b,c]))
+    Br (t,v) -> "br " ++ (showLab (t,v))
     Phi v t lst -> (show v) ++ " = phi " ++ (show t) ++ " " ++ (buildCommaString (map phiShow lst))
     Comment s -> "; " ++ s
+    Label n -> (show n) ++ ":"
     
 showtv :: LLVMTypeVal -> String
 showtv (a,b) = (show a) ++ " " ++ (show b)
 
+showLab :: LLVMTypeVal -> String
+showLab (TLabel, vlab) = "label " ++ "%" ++ (show vlab)
 
 phiShow :: (LLVMVal,LLVMVal) -> String
-phiShow (v, l@(VLabel n)) = "[" ++ (show v) ++ ", " ++ show l ++ "]"
+phiShow (v, l@(VLabel n)) = "[" ++ (show v) ++ ", %" ++ show l ++ "]"

@@ -20,6 +20,7 @@ import Control.Monad.Except
 import System.Environment (getArgs)
 import System.FilePath
 import System.IO
+import System.Exit
 
 import qualified Data.Text as T
 import qualified Data.Map as Map
@@ -37,20 +38,23 @@ run v fp s = do
   let outFile = dropExtension fp <.> "ll"
   case ts of
            Bad s    -> do
-             hPutStrLn stderr $ "ERROR\n" ++ s
+             hPutStrLn stderr "ERROR"
+             die s
            Ok  tree -> do
              res <- runExceptT $ checkAll tree
              case res of
                Left t -> do
-                 hPutStrLn stderr $ "ERROR\n"
-                 hPutStrLn stderr $ "frontend check failed:\n" ++ T.unpack t
+                 hPutStrLn stderr $ "ERROR"
+                 die $ "frontend check failed:\n" ++ T.unpack t
                Right newTree -> do
                  let res2 = runBackend fp newTree
                  case res2 of
                    Right t -> do
-                     hPutStrLn stderr $ "OK\n" ++ T.unpack t
+                     hPutStrLn stderr $ "OK\n" ++ T.unpack t -- TODO
                      writeFile outFile $ T.unpack t
-                   Left t -> hPutStrLn stderr $ "ERROR\n\nbackend error: " ++ T.unpack t
+                   Left t -> do
+                     hPutStrLn stderr $ "ERROR"
+                     die $ T.unpack t
                  return () 
   putStrLn $ "testing file " ++ (show outFile) ++ " done."
                  
