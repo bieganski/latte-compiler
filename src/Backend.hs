@@ -135,6 +135,11 @@ genExp e = case e of
       TVoid -> do
         emit $ FunCall VVoid TVoid iid tvs
         return (TVoid, VVoid)
+      TPtr TChar -> do
+        fresh <- getFresh
+        newToBeGc fresh
+        emit $ FunCall (VReg fresh) ret iid tvs
+        return (ret, VReg fresh)
       _ -> do
         fresh <- getFresh
         emit $ FunCall (VReg fresh) ret iid tvs
@@ -142,8 +147,7 @@ genExp e = case e of
   Abs.EString s -> do
     v@(VGlobStr num) <- addGlobStr s
     f <- getFresh
-    -- modify \s -> s { gcRefs = Map.insert (Abs.Ident $ "$" ++ (show f) }
-    -- TODO teraz mamy newToBeGc, po prostu nie dodajemy
+    -- do not garbage collect; it's not on heap
     let tarr = (TArr (toInteger (1 + length s)) TChar)
     emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
     return (tstr, VReg f)
@@ -367,9 +371,8 @@ genStmt s (inner, outer) = do
         (TPtr TChar, VReg n) -> do
           lst <- gets gcToDel
           m <- gets gcRefs
-          let outerFun = \val -> when (id `elem` inner) $ modify \s -> do
-            o <- gets gcOuter
-            s { gcOuter = Map.insert o val m }
+          o <- gets gcOuter
+          let outerFun = \val -> when (id `elem` inner) $ modify \s -> s { gcOuter = Map.insert id val o }
           case e of
               Abs.EAdd _ Abs.Plus _ -> do
                 modify \s -> s { gcRefs = Map.insert id n m }
@@ -379,9 +382,8 @@ genStmt s (inner, outer) = do
                 modify \s -> s { gcRefs = Map.insert id (m Map.! id2) m }
                 outerFun $ m Map.! id2
               Abs.EApp fun exprs -> do
-                f <- getFresh
-                modify \s -> s { gcRefs = Map.insert id f m }
-                outerFun f
+                modify \s -> s { gcRefs = Map.insert id n m }
+                outerFun n
         _ -> return ()
       comp
     Abs.BStmt b -> do
@@ -415,10 +417,15 @@ genStmt s (inner, outer) = do
           return (inner, Map.insert id val outer)
     Abs.Empty -> return (inner, outer)
     Abs.Ret e -> do
-      val <- genExp e
+      val@(t,v) <- genExp e
+      case (t,v) of
+        (TPtr TChar, VReg n) -> removeFromBeingGc n
+        _ -> return ()
+      doGc
       emit $ Ret val
       return (inner, outer)
     Abs.VRet -> do
+      doGc
       emit $ Ret (TVoid, VDummy)
       return (inner, outer)
     Abs.SExp e -> do
@@ -604,10 +611,10 @@ genBlock (Abs.Block ss) = do
 emitTopDefIR :: Abs.TopDef -> GenM ()
 emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   emit $ FunEntry id $ TFun (mapType ret) (map (mapType . (^.Abs.t)) args)
-  let comp = genBlock block >> emit FunEnd
   emit $ Label $ VLabel $ toInteger $ length args
-  modify $ \s -> s{ fresh = toInteger (1 + (length args)), currBlock = toInteger $ length args, venv = createFunctionEnv args}
-  comp
+  modify $ \s -> s{ fresh = toInteger (1 + (length args)), currBlock = toInteger $ length args, venv = createFunctionEnv args, gcToDel = [], gcRefs = Map.empty, gcOuter = Map.empty}
+  genBlock block
+  emit FunEnd
   ii <- gets ins
   modify \s -> s {ins = fixEmptyBlock (mapType ret) ii}
 
