@@ -52,12 +52,16 @@ type VarEnv = Map.Map Abs.Ident LLVMTypeVal
 -- number of current block
 -- function env
 -- variable env (per block)
+-- garbage collector reference counter
+-- garbage collector list to be deleted leaving current block
 data GenS = GenS {ins :: [Instr],
                  fresh :: Integer,
                  lits :: Map.Map LLVMVal String,
                  currBlock :: Integer,
                  fenv :: FuncEnv,
-                 venv :: VarEnv}
+                 venv :: VarEnv,
+                 gcRefs :: Map.Map Abs.Ident Integer,
+                 gcToDel :: [Integer]}
 
 
 type GenM = StateT GenS (Except T.Text)
@@ -76,6 +80,18 @@ getFunType id = do
   m <- gets fenv
   return $ m Map.! id
 
+
+-- Garbage Collector -------------------------
+
+gcFree :: GenM ()
+gcFree = do
+  lst <- gets gcToDel
+  let comp = \id -> emit $ FunCall VVoid TVoid "_free" [(tstr, VReg id)]
+  forM_ lst comp
+
+
+
+-- Code Generation ---------------------------
 
 addGlobStr :: String -> GenM LLVMVal
 addGlobStr s = do
@@ -531,7 +547,7 @@ t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f top
 
 
 s0 :: Abs.Program -> GenS
-s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty
+s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty Map.empty []
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
@@ -543,7 +559,8 @@ builtInFunctions = Map.fromList
    (Abs.Ident "_malloc",     TFun tstr [TInt]),
    (Abs.Ident "_strcat",     TFun tstr [tstr, tstr]),
    (Abs.Ident "_strcmp",     TFun TInt [tstr, tstr]),
-   (Abs.Ident "_strcpy",     TFun tstr [tstr, tstr])]
+   (Abs.Ident "_strcpy",     TFun tstr [tstr, tstr]),
+   (Abs.Ident "_free",       TFun TVoid [tstr])]
 
  
 buildIR :: FilePath -> T.Text -> T.Text

@@ -49,3 +49,6 @@ char *_strcpy(char *a, char *b) {
     return strcpy(a, b);
 }
 
+void _free(char * str) {
+    free(str);
+}
