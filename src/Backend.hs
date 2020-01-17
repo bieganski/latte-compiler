@@ -53,7 +53,8 @@ type VarEnv = Map.Map Abs.Ident LLVMTypeVal
 -- function env
 -- variable env (per block)
 -- garbage collector reference counter
--- garbage collector list to be deleted leaving current block
+-- garbage collector list of candidats to be deleted
+-- garbage collector diff env change for outer-block variables 
 data GenS = GenS {ins :: [Instr],
                  fresh :: Integer,
                  lits :: Map.Map LLVMVal String,
@@ -61,7 +62,8 @@ data GenS = GenS {ins :: [Instr],
                  fenv :: FuncEnv,
                  venv :: VarEnv,
                  gcRefs :: Map.Map Abs.Ident Integer,
-                 gcToDel :: [Integer]}
+                 gcToDel :: [Integer],
+                 gcOuter :: Map.Map Abs.Ident Integer}
 
 
 type GenM = StateT GenS (Except T.Text)
@@ -83,13 +85,28 @@ getFunType id = do
 
 -- Garbage Collector -------------------------
 
-gcFree :: GenM ()
-gcFree = do
-  lst <- gets gcToDel
+declaredStrings :: Abs.Block -> [Abs.Ident]
+declaredStrings (Abs.Block []) = []
+declaredStrings (Abs.Block (s:stmts)) = let res = declaredStrings $ Abs.Block stmts in
+  case s of
+    Abs.Decl (Abs.Str) items -> res ++ (map (^.Abs.iid) items)
+    _ -> res
+
+newToBeGc :: Integer -> GenM ()
+newToBeGc n = gets gcToDel >>= \lst -> modify \s -> s { gcToDel = (n:lst) }
+
+removeFromBeingGc :: Integer -> GenM ()
+removeFromBeingGc n = gets gcToDel >>= \lst -> modify \s -> s {gcToDel = filter (/=n) lst}
+
+doGc :: GenM ()
+doGc = do
+  m <- gets gcRefs
+  all <- gets gcToDel
+  let lst = flip filter all $ not . (flip elem $ Map.elems m)
   let comp = \id -> emit $ FunCall VVoid TVoid "_free" [(tstr, VReg id)]
+  traceM $ ">>>>>>>>>>>doing GC for " ++ (show lst) 
   forM_ lst comp
-
-
+  
 
 -- Code Generation ---------------------------
 
@@ -102,7 +119,8 @@ addGlobStr s = do
       modify $ \st -> st {lits = Map.insert glob s m}
       return $ VGlobStr $ toInteger $ Map.size m
     [(VGlobStr num, _)] -> return $ VGlobStr num
-    
+
+  
 
 genExp :: Abs.Expr -> GenM LLVMTypeVal
 genExp e = case e of
@@ -124,6 +142,8 @@ genExp e = case e of
   Abs.EString s -> do
     v@(VGlobStr num) <- addGlobStr s
     f <- getFresh
+    -- modify \s -> s { gcRefs = Map.insert (Abs.Ident $ "$" ++ (show f) }
+    -- TODO teraz mamy newToBeGc, po prostu nie dodajemy
     let tarr = (TArr (toInteger (1 + length s)) TChar)
     emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
     return (tstr, VReg f)
@@ -208,7 +228,10 @@ genExp e = case e of
             f <- getFresh
             emit $ Bin (VReg f) op TInt v1 v2
             return (TInt, VReg f)
-      (_,_) -> concatStrings (t1,v1) (t2,v2)
+      (_,_) -> do
+        res@(TPtr TChar, VReg r) <- concatStrings (t1,v1) (t2,v2)
+        newToBeGc r
+        return res
   Abs.EAnd e1 e2 -> do
     (_, v1) <- genExp e1
     case v1 of
@@ -242,34 +265,6 @@ jumpAndOr e2 v1 op = do
   res <- getFresh
   emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel br1)]
   return (TBool, VReg res)
-
-{-
-jumpAndOr :: Abs.Expr -> LLVMVal -> RelOp -> GenM LLVMTypeVal
-jumpAndOr e2 v1 op = do
-        f <- getFresh
-        emit $ Cmp (VReg f) op TBool v1 (VInt 0)
-        GenM ins n m blockNum _ _ <- get
-        branch1 <- getFresh
-        -- branch2 <- getFresh // we cannot do that, because register numbers must be +1 each
-        let cond = \b2 -> BrCond (TBool, VReg f) (TLabel, VLabel branch1) (TLabel, VLabel b2)
-        put ([],n+1,m,branch1) -- entering new block
-        -- emit $ Comment $ "im in block " ++ (show branch1)
-        emit $ Label $ VLabel $ toInteger $ branch1
-        (_, v2) <- genExp e2 -- during that, new instructions were added
-        (e2ins,_,_,r) <- get -- these are new ones (cause we started with [] list)
-        branch2 <- getFresh
-        let allIns = concat [[cond branch2],
-                             reverse e2ins,
-                             [Br (TLabel, VLabel branch2)]] -- in proper order
-        (_,n,m,b) <- get
-        put (reverse $ (reverse ins) ++ allIns,n,m,branch2)
-        emit $ Label $ VLabel $ toInteger $ branch2
-        -- emit $ Comment $ "im in block " ++ (show branch2)
-        res <- getFresh
-        emit $ Phi (VReg res) TBool [(v1, VLabel blockNum), (v2, VLabel r)]
-        return (TBool, VReg res)
--}
-
 
 tstr = TPtr TChar
 
@@ -343,8 +338,6 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
   (_, v) <- genExp e
   return (fenv, Map.insert id (t, v) venv)
 
-debug = ([], Map.empty)
-
 -- returns changed variable env, because
 -- Reader's "local" function is not enough; sometimes we need to overwrite values from
 -- outer block
@@ -360,18 +353,44 @@ genStmt s (inner, outer) = do
       (fnv', vnv') <- foldM declChangeEnv env $ zip (repeat t) items
       modify \s -> s { fenv = fnv', venv = vnv'}
       return (inner ++ map (^.Abs.iid) items, outer)
-    Abs.Ass id e -> case id `elem` inner of
-      True -> do
-        val <- genExp e
-        modify \s -> s { venv = Map.insert id val vnv }
-        return (inner, outer)
-      False -> do
-        val <- genExp e
-        let vnv' = Map.insert id val vnv
-        modify \s -> s { venv = Map.insert id val vnv }
-        return (inner, Map.insert id val outer)
+    Abs.Ass id e -> do
+      val@(t,v) <- genExp e
+      let comp = case id `elem` inner of
+            True -> do
+              modify \s -> s { venv = Map.insert id val vnv }
+              return (inner, outer)
+            False -> do
+              let vnv' = Map.insert id val vnv
+              modify \s -> s { venv = Map.insert id val vnv }
+              return (inner, Map.insert id val outer)
+      case (t,v) of
+        (TPtr TChar, VReg n) -> do
+          lst <- gets gcToDel
+          m <- gets gcRefs
+          let outerFun = \val -> when (id `elem` inner) $ modify \s -> do
+            o <- gets gcOuter
+            s { gcOuter = Map.insert o val m }
+          case e of
+              Abs.EAdd _ Abs.Plus _ -> do
+                modify \s -> s { gcRefs = Map.insert id n m }
+                outerFun n
+              Abs.EVar id2 -> do
+                -- we copied reference
+                modify \s -> s { gcRefs = Map.insert id (m Map.! id2) m }
+                outerFun $ m Map.! id2
+              Abs.EApp fun exprs -> do
+                f <- getFresh
+                modify \s -> s { gcRefs = Map.insert id f m }
+                outerFun f
+        _ -> return ()
+      comp
     Abs.BStmt b -> do
+      modify \s -> s { gcOuter = Map.empty }
+      gcPreRef <- gets gcRefs
       out <- genBlock b
+      gcOut <- gets gcOuter
+      doGc
+      modify \s -> s { gcRefs = Map.union gcOut gcPreRef } 
       modify \s -> s { venv = Map.union out vnv }
       return (inner, Map.union out outer)
     Abs.Decr id -> do
@@ -547,7 +566,7 @@ t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f top
 
 
 s0 :: Abs.Program -> GenS
-s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty Map.empty []
+s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty Map.empty [] Map.empty
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
