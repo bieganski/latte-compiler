@@ -418,10 +418,13 @@ genStmt s (inner, outer) = do
     Abs.Empty -> return (inner, outer)
     Abs.Ret e -> do
       val@(t,v) <- genExp e
+      
       case (t,v) of
-        (TPtr TChar, VReg n) -> removeFromBeingGc n
-        _ -> return ()
-      doGc
+        (TPtr TChar, VReg n) -> do
+          removeFromBeingGc n
+          doGc
+          newToBeGc n
+        _ -> doGc
       emit $ Ret val
       return (inner, outer)
     Abs.VRet -> do
@@ -544,7 +547,7 @@ fixEmptyBlock rett (FunEnd:((Label l):rest)) = (FunEnd:(a:((Label l):rest)))
   where a = Ret (rett, def rett)
 fixEmptyBlock _ a = a
 
-constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal ->
+  constructPhi :: Map.Map Abs.Ident LLVMTypeVal -> Map.Map Abs.Ident LLVMTypeVal ->
   LLVMVal -> LLVMVal ->
   (Abs.Ident, LLVMType, LLVMVal) -> GenM ((Abs.Ident, LLVMTypeVal), Instr) 
 constructPhi m1 m2 b1 b2 (id,t,v) = do
