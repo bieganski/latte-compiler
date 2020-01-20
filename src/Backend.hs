@@ -105,7 +105,8 @@ doGc = do
   let lst = flip filter all $ not . (flip elem $ Map.elems m)
   let comp = \id -> emit $ FunCall VVoid TVoid "_free" [(tstr, VReg id)]
   traceM $ ">>>>>>>>>>>doing GC for " ++ (show lst) 
-  forM_ lst comp
+  -- forM_ lst comp TODO
+  return ()
   
 
 -- Code Generation ---------------------------
@@ -145,12 +146,23 @@ genExp e = case e of
         emit $ FunCall (VReg fresh) ret iid tvs
         return (ret, VReg fresh)
   Abs.EString s -> do
+  
     v@(VGlobStr num) <- addGlobStr s
     f <- getFresh
     -- do not garbage collect; it's not on heap
     let tarr = (TArr (toInteger (1 + length s)) TChar)
     emit $ GetElemPtr (VReg f) tarr [(TPtr tarr, v), (TInt, VInt 0), (TInt, VInt 0)]
-    return (tstr, VReg f)
+
+    
+    newStr <- getFresh
+    emit $ FunCall (VReg newStr) tstr "_malloc" [(TInt, VInt (1 + toInteger (length s)))]
+    newStrDup <- getFresh
+    emit $ FunCall (VReg newStrDup) tstr "_strcpy" [(tstr, (VReg newStr)), (tstr, VReg f)]
+
+    newToBeGc newStr
+    
+    -- return (tstr, VReg f)
+    return (tstr, VReg newStr)
   Abs.Neg e -> genExp $ Abs.EAdd (Abs.ELitInt 0) Abs.Minus e
   Abs.Not e -> do
     (t,v) <- genExp e
@@ -432,7 +444,10 @@ genStmt s (inner, outer) = do
       emit $ Ret (TVoid, VDummy)
       return (inner, outer)
     Abs.SExp e -> do
-      val <- genExp e
+      val@(t,v) <- genExp e
+      case (t,v,e) of
+        (TPtr TChar, VReg n, Abs.EAdd _ _ _) -> newToBeGc n
+        _ -> return ()
       return (inner, outer)
     Abs.CondElse e s1 s2 -> do
       (TBool,v) <- genExp e
@@ -490,7 +505,7 @@ genStmt s (inner, outer) = do
 
 
       let phiNum = length phiNodes
-      phiStartNum <- gets fresh -- without modifying anything
+      phiStartNum <- gets fresh -- without modifying state
       modify \s -> s { fresh = phiStartNum + (toInteger phiNum) }
       
       let phiMap = Map.fromList $ zip phiNodes $ zip phiTs $ map VReg [phiStartNum..]
