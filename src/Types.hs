@@ -52,7 +52,8 @@ data LLVMType =
   TChar |
   TFun LLVMType [LLVMType] |
   TPtr LLVMType |
-  TLabel
+  TLabel |
+  TStruct [LLVMType]
   deriving (Eq, Ord)
 
 instance Show LLVMType where
@@ -64,7 +65,8 @@ instance Show LLVMType where
     TPtr t -> (show t) ++ "*"
     TLabel -> "label"
     TArr num t -> "[" ++ (show num) ++ " x " ++ (show t) ++ "]"
-    TFun ret args -> "TODO"
+    TFun ret args -> "<<TSfun, shouldn't be visible>>"
+    TStruct ts -> "{ " ++ ( concat (map showtv (zip ts (repeat VDummy))) ) ++ " }"
 
 data LLVMVal = VDummy
              | VInt Integer
@@ -103,6 +105,7 @@ data Instr =
   | Phi LLVMVal LLVMType [(LLVMVal, LLVMVal)]
   | Comment String
   | Label LLVMVal
+  | StructDef String LLVMType
   deriving (Eq, Ord)
 
 instance Show Instr where
@@ -122,6 +125,7 @@ instance Show Instr where
     Phi v t lst -> (show v) ++ " = phi " ++ (show t) ++ " " ++ (buildCommaString (map phiShow lst))
     Comment s -> "; " ++ s
     Label n -> (show n) ++ ":"
+    StructDef id t -> "%struct." ++ id ++ " = type " ++ (show t)
     
 showtv :: LLVMTypeVal -> String
 showtv (a,b) = (show a) ++ " " ++ (show b)

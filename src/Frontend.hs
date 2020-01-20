@@ -239,7 +239,15 @@ onlyDeclaredVarsUsedBlock (Block (s:stmts)) funName = do
           check id
           forM_ (varsInExp e) check
           comp
-        _ -> throwError $ T.pack "internal panic: onlyDeclaredVarsUsedBlock"
+        EField (EVar id) fieldId -> do
+          check id
+          forM_ (varsInExp e) check
+          comp
+        ENull _ -> throwError $ T.pack $ "error in " ++ (show e) ++ ":\nassigning to NULL"
+        ENew t -> do
+          forM_ (varsInExp e) check
+          comp
+        _ -> throwError $ T.pack $ "assigining error: " ++ (show left)  ++ "cannot be lvalue!"
     Incr id -> do
       check id
       comp
@@ -395,7 +403,6 @@ typeCheckBlock (Block (s:stmts)) = do
                 Just tt -> case tt == t of
                   True -> typeCheckBlock (Block stmts)
                   False -> throwError $ T.pack $ printf "error in %s: field %s of class %s got type %s, and assigned to it type %s!" (show loc) (show field) (show cls) (show tt) (show t)
-              _ -> throwError $ T.pack "internal panic"
         EVar id -> case Map.lookup id venv of
           Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
           Just tt -> do
@@ -533,6 +540,8 @@ inferType e = do
         (Int,Int,_) -> return Bool
         (Bool,Bool,NE) -> return Bool
         (Bool,Bool,EQU) -> return Bool
+        (ClassType _, ClassType _, EQU) -> return Bool
+        (ClassType _, ClassType _, NE) -> return Bool
         _ -> throwError $ T.pack $ printf "error in %s: type mismatch during comparision (%s and %s) in %s" (show loc) (show t1) (show t2) (show e)
     EAnd e1 e2 -> do
       t1 <- inferType e1
@@ -544,14 +553,7 @@ inferType e = do
       if t1 == Bool && t2 == Bool then return Bool else throwError $ T.pack $ printf "error in %s: logical OR type mismatch (%s + %s) in %s!" (show loc) (show t1) (show t2) (show e)
 
 
- 
-
--- varsInExp :: Expr -> [Ident]
-
--- replaceStmt :: Program -> Stmt ->
-
-
-data Val = VBool Bool | VInt Integer | VStr String | CxtDep
+data Val = VBool Bool | VInt Integer | VStr String | CxtDep | VClass Ident
 
 type OptMap = Map.Map Ident Val
 
@@ -559,11 +561,14 @@ checkExpr :: Expr -> EnvM OptMap Val
 checkExpr e = do
   v <- ask
   case e of
+    EField (EVar id) fieldId -> return CxtDep -- TODO
+    ENew t -> return CxtDep
+    ENull id -> return CxtDep
     EVar x -> return $ v Map.! x
     ELitInt n -> return $ VInt n
     ELitTrue -> return $ VBool True
     ELitFalse -> return $ VBool False
-    EApp id exps -> return $ VBool False -- TODO
+    EApp id exps -> return $ VBool False
     EString s -> return $ VStr s
     Neg e -> do
       res <- checkExpr e
@@ -645,6 +650,7 @@ declVal t i = case i of
     Int -> return $ VInt 0
     Str -> return $ VStr ""
     Bool -> return $ VBool False
+    ClassType id -> return $ VClass $ Ident "undefined"
   Init id e -> checkExpr e
 
 removeUnreachableBlock :: Block -> EnvM OptMap Block
@@ -668,6 +674,8 @@ removeUnreachableBlock (Block (s:stmts)) = do
         EVar id -> do
           v <- checkExpr e
           local (const $ Map.insert id v m) comp >>= f
+        EField (EVar id) field -> do
+          comp >>= f
         _ -> error $ "not implemented in " ++ "removeUnreachableBlock"
     Incr id -> do
       let v = m Map.! id
@@ -755,15 +763,13 @@ checkClassFieldsUnique (ClassDef id (ClassBlock decls)) = do
     True -> return ()
     False -> throwError $ T.pack $ printf "error in class %s definition:\nfield name not unique: %s" (show id) (show (LU.repeated $ map (^.cdid) decls))
 
-                           
+
+
+type StructMap = Map.Map Ident (Map.Map Ident Type)
+             
 checkAll :: Program -> ExceptT T.Text IO Program
 checkAll wholeTree@(Program defs) = do
-  let _tree = filter (is _FnDef) defs -- Program $ [x | x@FnDef {} <- defs] -- filter (is _FnDef) defs
-  -- let _tree = [x | x@FnDef {} <- defs]
-  -- tree :: [TopDef]
-  let tree = Program _tree
-  -- tree :: Program
-  -- let classDefs = [x | x@ClassDef {} <- defs] -- filter (is _ClassDef) defs
+  let tree = Program $ filter (is _FnDef) defs
   let classDefs = filter (is _ClassDef) defs
   forM_ classDefs checkClassFieldsUnique
 
@@ -789,6 +795,7 @@ checkAll wholeTree@(Program defs) = do
   -- newTree  
   -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
-  let newTreeWithRets = Program $ classDefs ++ (map fixReturnLack $ defs)
+  let newTreeWithRets = Program $ classDefs ++ (map fixReturnLack defs)
   -- traceM $ printTree newTreeWithRets
+  traceM $ "FRONTEND OK"
   return newTreeWithRets

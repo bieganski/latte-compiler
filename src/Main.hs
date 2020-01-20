@@ -1,7 +1,7 @@
 module Main where
 
 import Frontend
-import Backend(runBackend)
+-- import Backend(runBackend)
 
 
 import AbsLatte
@@ -48,6 +48,8 @@ run v fp s = do
                  hPutStrLn stderr $ "ERROR"
                  die $ "frontend check failed:\n" ++ T.unpack t
                Right newTree -> do
+                 putStrLn "FRONTEND OK"
+                 {-
                  let res2 = runBackend fp newTree
                  case res2 of
                    Right t -> do
@@ -57,7 +59,7 @@ run v fp s = do
                      hPutStrLn stderr $ "ERROR"
                      die $ T.unpack t
                  return () 
-                 
+                 -}
 
 runFile :: Verbosity -> FilePath -> IO ()
 runFile v f = readFile f >>= run v f
