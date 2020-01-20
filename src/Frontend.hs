@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Frontend where
 
@@ -23,6 +24,8 @@ import Control.Lens
 import PrintLatte
 import Debug.Trace
 import Utils
+import Control.Lens.Extras (is)
+
 
 type EnvM e = ReaderT e (ExceptT T.Text IO)
 type StateM s = StateT s (ExceptT T.Text IO)
@@ -230,10 +233,13 @@ onlyDeclaredVarsUsedBlock (Block (s:stmts)) funName = do
     BStmt b -> do
       onlyDeclaredVarsUsedBlock b funName
       comp
-    Ass id e -> do
-      check id
-      forM_ (varsInExp e) check
-      comp
+    Ass left e -> do
+      case left of
+        EVar id -> do
+          check id
+          forM_ (varsInExp e) check
+          comp
+        _ -> throwError $ T.pack "internal panic: onlyDeclaredVarsUsedBlock"
     Incr id -> do
       check id
       comp
@@ -348,7 +354,10 @@ properArgumentNumberCalls (Program topDefs) = do
 
 
 type FunType = (Type, [Type]) -- return, args
-type TypeCheckEnv = (Ts.Location, Map.Map Ident FunType, Map.Map Ident Type)
+type TypeCheckEnv = (Ts.Location,
+                     Map.Map Ident FunType,
+                     Map.Map Ident Type,
+                     Map.Map Ident (Map.Map Ident Type))
 
 
 errorTypecheck :: Ts.Location -> Maybe Expr -> Type -> Type -> T.Text
@@ -360,7 +369,7 @@ errorTypecheck loc ee actual shouldbe = case ee of
 typeCheckBlock :: Block -> EnvM TypeCheckEnv ()
 typeCheckBlock (Block []) = return ()
 typeCheckBlock (Block (s:stmts)) = do
-  (loc, fenv, venv) <- ask
+  (loc, fenv, venv, clsenv) <-  ask
   case s of
     AbsLatte.Empty -> typeCheckBlock (Block stmts)
     BStmt b -> (typeCheckBlock b) >> (typeCheckBlock (Block stmts))
@@ -372,14 +381,27 @@ typeCheckBlock (Block (s:stmts)) = do
               when (t2 /= tt) $ throwError $ errorTypecheck loc (Just e) tt t2
       forM_ items (checkItem t)
       let v' = Map.fromList $ zip (map itemIdent items) (repeat t)
-      local (\(l,f,v) -> (l,f, Map.union v' v)) $ typeCheckBlock (Block stmts)
-    Ass id e -> do
+      local (\(l,f,v,c) -> (l,f, Map.union v' v,c)) $ typeCheckBlock (Block stmts)
+    Ass left e -> do
       t <- inferType e
-      case Map.lookup id venv of
-        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
-        Just tt -> do
-          when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
-          typeCheckBlock (Block stmts)
+      case left of
+        EField left2 field -> do
+          cls <- inferType left2
+          case cls of
+            ClassType id -> case Map.lookup id clsenv of
+              Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined class %s" (show loc) (show cls)
+              Just m -> case Map.lookup field m of
+                Nothing -> throwError $ T.pack $ printf "error in %s: assignment of not-existing class's %s field %s" (show loc) (show cls) (show field)
+                Just tt -> case tt == t of
+                  True -> typeCheckBlock (Block stmts)
+                  False -> throwError $ T.pack $ printf "error in %s: field %s of class %s got type %s, and assigned to it type %s!" (show loc) (show field) (show cls) (show tt) (show t)
+              _ -> throwError $ T.pack "internal panic"
+        EVar id -> case Map.lookup id venv of
+          Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
+          Just tt -> do
+            when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
+            typeCheckBlock (Block stmts)
+        _ -> undefined -- TODO
     Incr id -> do
       case Map.lookup id venv of
         Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
@@ -430,7 +452,7 @@ typeCheckBlock (Block (s:stmts)) = do
 
 typeCheckTopDef :: TopDef -> EnvM TypeCheckEnv ()
 typeCheckTopDef (FnDef t id args b) = do
-  local (\(_, f, _) -> (Ts.FunName id, f, v)) (typeCheckBlock b) where
+  local (\(_, f, _,c) -> (Ts.FunName id, f, v,c)) (typeCheckBlock b) where
     v = Map.fromList $ map (\(Arg t id) -> (id, t)) args
 
 
@@ -441,25 +463,37 @@ getFuncType (FnDef t _ args _) = (t, argTs) where
 
 checkMain :: EnvM TypeCheckEnv ()
 checkMain = do
-  (loc, fenv, _) <- ask
-  let comp = \(Ident name, (retType, ts)) -> case name of
-                                               "main" -> when (retType /= Int ) $ throwError $ T.pack $ "'main' type must be int!"
-                                               _      -> return ()
+  (loc, fenv, _,_) <-  ask
+  let comp = \(Ident name, (retType, ts)) -> do
+        case name of
+          "main" -> when (retType /= Int ) $ throwError $ T.pack $ "'main' type must be int!"
+          _      -> return ()
   forM_ (Map.toList fenv) comp 
                           
   
 typeCheck :: Program -> EnvM TypeCheckEnv ()
 typeCheck (Program topDefs) = do
-  (l, builtins, v) <- ask
+  (l, builtins, v, c) <-  ask
   let fenv = Map.union builtins $ Map.fromList $ map (\a@(FnDef _ id _ _) -> (id, getFuncType a)) topDefs
-  local (const (l, fenv, v)) (checkMain >> forM_ topDefs typeCheckTopDef)
+  local (const (l, fenv, v, c)) (checkMain >> forM_ topDefs typeCheckTopDef)
 
     
 inferType :: Expr -> EnvM TypeCheckEnv Type
 inferType e = do
-  (loc, fenv, venv) <- ask
+  (loc, fenv, venv, clsenv) <- ask
   let errPrefix = show loc
   case e of
+    ENew t -> case t of
+      ClassType _ -> return t
+      _ -> throwError $ T.pack $ printf "error in %s: %s is not class-type!" (show loc) (show t)
+    ENull id -> case Map.lookup id clsenv of
+      Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined class %s!" (show loc) (show id)
+      Just m -> return $ ClassType id 
+    EField cls field -> do
+      ClassType id <- inferType cls
+      case Map.lookup field (clsenv Map.! id) of
+        Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined class field %s!" (show loc) (show field)
+        Just tt -> return tt
     EVar id -> do
       case Map.lookup id venv of
         Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
@@ -629,9 +663,12 @@ removeUnreachableBlock (Block (s:stmts)) = do
       vals <- mapM (declVal t) items
       let m' = Map.fromList $ zip ids vals
       local (\mm -> Map.union m' mm) comp >>= f
-    Ass id e -> do
-      v <- checkExpr e
-      local (const $ Map.insert id v m) comp >>= f
+    Ass left e -> do
+      case left of
+        EVar id -> do
+          v <- checkExpr e
+          local (const $ Map.insert id v m) comp >>= f
+        _ -> error $ "not implemented in " ++ "removeUnreachableBlock"
     Incr id -> do
       let v = m Map.! id
       let v' = case v of
@@ -704,8 +741,37 @@ removeUnreachableCode :: Program -> ExceptT T.Text IO Program
 removeUnreachableCode (Program topDefs) = runReaderT (forM topDefs removeUnreachable >>= \defs -> return $ Program defs) Map.empty
 
 
+
+filterFunctions :: Program -> Program
+filterFunctions (Program []) = Program []
+filterFunctions (Program (top:tops)) = let Program res = filterFunctions (Program tops) in
+  case top of
+    FnDef _ _ _ _ -> Program (top:res)
+    ClassDef _ _ -> Program res
+
+checkClassFieldsUnique :: TopDef -> ExceptT T.Text IO ()
+checkClassFieldsUnique (ClassDef id (ClassBlock decls)) = do
+  case LU.allUnique $ map (^.cdid) decls of
+    True -> return ()
+    False -> throwError $ T.pack $ printf "error in class %s definition:\nfield name not unique: %s" (show id) (show (LU.repeated $ map (^.cdid) decls))
+
+                           
 checkAll :: Program -> ExceptT T.Text IO Program
-checkAll tree = do
+checkAll wholeTree@(Program defs) = do
+  let _tree = filter (is _FnDef) defs -- Program $ [x | x@FnDef {} <- defs] -- filter (is _FnDef) defs
+  -- let _tree = [x | x@FnDef {} <- defs]
+  -- tree :: [TopDef]
+  let tree = Program _tree
+  -- tree :: Program
+  -- let classDefs = [x | x@ClassDef {} <- defs] -- filter (is _ClassDef) defs
+  let classDefs = filter (is _ClassDef) defs
+  forM_ classDefs checkClassFieldsUnique
+
+  let help = \(FieldDecl t id) -> (id, t)
+  let clsIds = map (^.tid) classDefs
+  let clsTypeLists = map ((map help) . (^.cb.cdecls)) classDefs
+  let clsMap = Map.fromList $ zip clsIds (map Map.fromList clsTypeLists)
+  
   resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
   resArgs <- uniqueArgs tree
   resUniqueVars <- runReaderT (uniqueVars tree) []
@@ -716,12 +782,13 @@ checkAll tree = do
                                (Ident "printInt", (Void, [Int])),
                                (Ident "printString", (Void, [Str])),
                                (Ident "error", (Void, []))]
-  typeCheck <- runReaderT
+  typeCheckRes <- runReaderT
     (typeCheck tree)
-    (Ts.FunName (Ident "dummy"), builtins, Map.empty)
-  newTree <- removeUnreachableCode tree
+    (Ts.FunName (Ident "dummy"), builtins, Map.empty, clsMap)
+  newTree@(Program defs) <- removeUnreachableCode tree
+  -- newTree  
   -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
-  let newTreeWithRets = Program $ map fixReturnLack $ newTree^.defs
+  let newTreeWithRets = Program $ classDefs ++ (map fixReturnLack $ defs)
   -- traceM $ printTree newTreeWithRets
   return newTreeWithRets

@@ -6,11 +6,23 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
+ClassDef.  TopDef ::= "class" Ident ClassBlock ;
+
 separator nonempty TopDef "" ;
 
 Arg. 	   Arg ::= Type Ident;
 
 separator  Arg "," ;
+
+
+-- classes ----------------------------------------------
+
+ClassBlock.	ClassBlock ::= "{" [ClassDecl] "}" ;
+
+separator nonempty ClassDecl "" ;
+
+FieldDecl.     ClassDecl ::= Type Ident ";" ;
+
 
 -- statements ----------------------------------------------
 
@@ -30,7 +42,7 @@ Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
-Ass.       Stmt ::= Ident "=" Expr  ";" ;
+Ass.       Stmt ::= Expr "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -50,6 +62,8 @@ SExp.      Stmt ::= Expr  ";" ;
 
 -- Types ---------------------------------------------------
 
+ClassType. Type ::= Ident ;
+
 Int.       Type ::= "int" ;
 
 Str.       Type ::= "string" ;
@@ -63,6 +77,14 @@ internal   Fun. Type ::= Type "(" [Type] ")" ;
 separator  Type "," ;
 
 -- Expressions ---------------------------------------------
+
+EField.    Expr6 ::= Expr6 "." Ident ;
+
+ENew.      Expr6 ::= "new" Type ;
+
+ENull.	   Expr6 ::= "(" Ident ")" "null" ;
+
+---------
 
 EVar.      Expr6 ::= Ident ;
 

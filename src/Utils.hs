@@ -40,9 +40,12 @@ varsAssigned s = do
   AssCheck i r <- get
   case s of
     Abs.Decl _ items -> modify \st -> st {inner = inner st ++ map (^.Abs.iid) items}
-    Abs.Ass id _ -> case id `elem` i of
-      False -> modify \st -> st {result = id : (result st)}
-      True -> return ()
+    Abs.Ass l r -> do
+      case l of
+        Abs.EVar id -> case id `elem` i of
+          False -> modify \st -> st {result = id : (result st)}
+          True -> return ()
+        Abs.EField (Abs.EVar clsId) fieldId -> modify \st -> st {result = clsId : (result st)}
     Abs.BStmt (Abs.Block stmts) -> forM_ stmts varsAssigned
     Abs.Incr id -> case id `elem` i of
       False -> modify \st -> st {result = id : (result st)}

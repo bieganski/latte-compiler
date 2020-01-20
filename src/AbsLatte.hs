@@ -11,7 +11,8 @@ newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
 data Program = Program { _defs :: [TopDef] }
   deriving (Eq, Ord, Show, Read)
 
-data TopDef = FnDef {_ft :: Type, _fid :: Ident, _as :: [Arg], _bl :: Block }
+data TopDef = FnDef {_ft :: Type, _tid :: Ident, _as :: [Arg], _bl :: Block }
+  | ClassDef {_tid :: Ident, _cb :: ClassBlock}
   deriving (Eq, Ord, Show, Read)
 
 data Arg = Arg {_t :: Type, _aid :: Ident}
@@ -20,11 +21,18 @@ data Arg = Arg {_t :: Type, _aid :: Ident}
 data Block = Block { _ss :: [Stmt] }
   deriving (Eq, Ord, Show, Read)
 
+data ClassBlock = ClassBlock { _cdecls :: [ClassDecl] } 
+  deriving (Eq, Ord, Show, Read)
+
+data ClassDecl = FieldDecl { _ct :: Type, _cdid :: Ident }
+  deriving (Eq, Ord, Show, Read)
+
+
 data Stmt
     = Empty
     | BStmt Block
     | Decl { _st :: Type,  _items :: [Item] }
-    | Ass {_sid :: Ident, _se :: Expr}
+    | Ass {lvalue :: Expr, _se :: Expr}
     | Incr {_sid :: Ident}
     | Decr {_sid :: Ident}
     | Ret {_se :: Expr}
@@ -38,11 +46,14 @@ data Stmt
 data Item = NoInit {_iid :: Ident} | Init { _iid :: Ident, e :: Expr}
   deriving (Eq, Ord, Show, Read)
 
-data Type = Int | Str | Bool | Void | Fun Type [Type]
+data Type = ClassType Ident | Int | Str | Bool | Void | Fun Type [Type]
   deriving (Eq, Ord, Show, Read)
 
 data Expr
-    = EVar Ident
+    = EField Expr Ident
+    | ENew Type
+    | ENull Ident
+    | EVar Ident
     | ELitInt Integer
     | ELitTrue
     | ELitFalse
@@ -74,3 +85,8 @@ makeLenses ''Expr
 makeLenses ''Arg
 makeLenses ''Block
 makeLenses ''Program
+
+makeLenses ''ClassDecl
+makeLenses ''ClassBlock
+
+makePrisms ''TopDef
