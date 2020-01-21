@@ -418,7 +418,6 @@ typeCheckBlock (Block (s:stmts)) = do
           Just tt -> do
             when (t /= tt) $ throwError $ errorTypecheck loc (Just e) t tt
             typeCheckBlock (Block stmts)
-        _ -> undefined -- TODO
     Incr id -> do
       case Map.lookup id venv of
         Nothing -> throwError $ T.pack $ printf "error in %s: usage of not defined variable %s" (show loc) (show id)
@@ -534,7 +533,7 @@ inferType e = do
     EMul e1 _ e2 -> do
       t1 <- inferType e1
       t2 <- inferType e2
-      if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "TODO"
+      if t1 == Int && t2 == Int then return Int else throwError $ T.pack $ printf $ "multiplication supported only for int!"
     EAdd e1 op e2 -> do
       t1 <- inferType e1
       t2 <- inferType e2
@@ -571,7 +570,7 @@ checkExpr :: Expr -> EnvM OptMap Val
 checkExpr e = do
   v <- ask
   case e of
-    EField (EVar id) fieldId -> return CxtDep -- TODO
+    EField (EVar id) fieldId -> return CxtDep
     ENew t -> return CxtDep
     ENull id -> return CxtDep
     EVar x -> return $ v Map.! x

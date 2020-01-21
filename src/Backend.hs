@@ -134,8 +134,8 @@ genExp e = case e of
             res <- getFresh
             emit $ Load (VReg res) typ (TPtr typ, VReg fieldLoc)
             return (typ, VReg res)
-        
-      Just (t,_) -> throwError $ T.pack $ printf "%s is not class-type!\n in %s" (show t) (show e) 
+      Just (t,_) -> throwError $ T.pack $ printf "%s is not class-type!\n in %s" (show t) (show e)
+  Abs.EField (Abs.EField e1 e2) fieldId -> throwError $ T.pack "multiple levels struct props referencing not required"
   Abs.EVar id -> getVar id
   Abs.ELitInt n -> return (TInt, VInt n)
   Abs.ELitTrue -> return (TBool, VBool True)
@@ -344,7 +344,7 @@ defaultVal t = case t of
   TPtr TChar -> VGlobStr 0
   TBool -> VBool False
   TVoid -> VVoid
-  _ -> error "STRUKTURA TODO defaultVal"
+  TPtr (TStructName id) -> VNull
 
 declChangeEnv :: (FuncEnv, VarEnv) -> (Abs.Type, Abs.Item) -> GenM (FuncEnv, VarEnv)
 declChangeEnv (fenv,venv) (t, (Abs.NoInit id)) = do
@@ -354,8 +354,6 @@ declChangeEnv (fenv,venv) (_t, (Abs.Init id e)) = do
   let t = mapType _t 
   (_, v) <- genExp e
   return (fenv, Map.insert id (t, v) venv)
-
-debug = ([], Map.empty)
 
 -- returns changed variable env, because
 -- Reader's "local" function is not enough; sometimes we need to overwrite values from
@@ -400,6 +398,7 @@ genStmt s (inner, outer) = do
           case clsVar `elem` inner of
             True -> return (inner, outer)
             False -> return (inner, outer)
+        Abs.EField (Abs.EField e1 e2) fieldId -> throwError $ T.pack "multiple levels struct props referencing not required"
     Abs.BStmt b -> do
       out <- genBlock b
       modify \s -> s { venv = Map.union out vnv }

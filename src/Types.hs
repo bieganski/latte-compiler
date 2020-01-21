@@ -11,8 +11,7 @@ data Location =
 instance Show Location where
   show what = case what of
     FunName (Abs.Ident id) -> "function " ++ id
-    _ -> "TODO"
-
+    _ -> "<<unknown location>>"
 
 
 data BinOp =
