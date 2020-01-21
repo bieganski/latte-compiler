@@ -78,6 +78,7 @@ data LLVMVal = VDummy
              | VLabel Integer
              | VReg Integer
              | VStruct [LLVMVal]
+             | VNull
              deriving (Eq, Ord)
 
 instance Show LLVMVal where
@@ -89,6 +90,7 @@ instance Show LLVMVal where
     VLabel n -> "L." ++ show n
     VReg n -> "%R." ++ show n
     VDummy -> ""
+    VNull -> "null"
 
 
 type LLVMTypeVal = (LLVMType, LLVMVal)
@@ -111,6 +113,9 @@ data Instr =
   | StructDef String LLVMType
   | GetOffsetPtr LLVMVal LLVMType
   | PtrToInt LLVMVal LLVMTypeVal
+  | BitCast LLVMVal LLVMTypeVal LLVMType
+  | Store LLVMTypeVal LLVMTypeVal
+  | Load LLVMVal LLVMType LLVMTypeVal
   deriving (Eq, Ord)
 
 instance Show Instr where
@@ -132,7 +137,11 @@ instance Show Instr where
     Label n -> (show n) ++ ":"
     StructDef id t -> "%struct." ++ id ++ " = type " ++ (show t)
     GetOffsetPtr f@(VReg _) t@(TStructName _) -> (show f) ++ " = getelementptr " ++ (show t) ++ ", " ++ (show t) ++ "* null, i32 1" 
-    PtrToInt x@(VReg _) (t@(TStructName _), y@(VReg _)) -> (show x) ++ " = ptrtoint " ++ (showw t) ++ " " ++ (show y) ++ " to i32"   
+    PtrToInt x@(VReg _) (t@(TStructName _), y@(VReg _)) -> (show x) ++ " = ptrtoint " ++ (showw t) ++ " " ++ (show y) ++ " to i32"
+    BitCast r tv t -> (show r) ++ " = bitcast " ++ (showtv tv) ++ " to " ++ (show t)
+    Store src dest -> "store " ++  (buildCommaString (map showtv [src, dest])) ++ ", align 8"
+    Load res srcT destTV -> (show res) ++ " = load " ++ (show srcT) ++ ", " ++ (showtv destTV)  ++ ", align 8"
+    _ -> error $ show i
 
 
 showw :: LLVMType -> String

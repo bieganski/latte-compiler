@@ -127,6 +127,8 @@ fixReturnLack a@(FnDef t id args (Block ss)) = case last ss of
             Void -> VRet
             Bool -> Ret ELitFalse
             Int -> Ret $ ELitInt 0
+            ClassType id -> Ret $ ENull id
+            
             
 returnsProperlyTopDef :: TopDef -> ExceptT T.Text IO ()
 returnsProperlyTopDef (FnDef t (Ident id) _ (Block stmts)) = do

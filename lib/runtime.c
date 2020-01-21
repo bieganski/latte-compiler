@@ -34,7 +34,7 @@ int _strlen(char * str) {
 }
 
 char *_malloc(int s) {
-    return malloc(s);
+    return calloc(s, 1);
 }
 
 char *_strcat(char *a, char *b) {

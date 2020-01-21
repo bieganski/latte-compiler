@@ -11,7 +11,7 @@ import Types
 import Utils
 import System.FilePath
 import Data.List as L
-
+import Text.Printf(printf)
 import Frontend(itemIdent)
 
 import Control.Monad.Reader
@@ -35,15 +35,6 @@ import Debug.Trace
 
 
 type FuncEnv = Map.Map Abs.Ident LLVMType
-
-absTypeToLLVM :: Abs.Type -> LLVMType
-absTypeToLLVM t = case t of
-            Abs.Int -> TInt
-            Abs.Str -> TPtr TChar
-            Abs.Bool -> TBool
-            Abs.Void -> TVoid
-            Abs.ClassType id -> TStructName id
-            _ -> error "not implemented (absTypeToLLVM)"
 
 getFresh :: GenM Integer
 getFresh = do
@@ -118,9 +109,33 @@ genExp e = case e of
   Abs.ENew (Abs.ClassType id) -> do
     csl <- gets clsenv
     size@(TInt, VReg x) <- computeStructSize id
+    _ptr <- getFresh
+    emit $ FunCall (VReg _ptr) tstr "_malloc" [size]
     ptr <- getFresh
-    emit $ FunCall (VReg ptr) tstr "_malloc" [size]
-    return (tstr, VReg ptr)
+    emit $ BitCast (VReg ptr) (TPtr TChar, VReg _ptr) (TPtr $ TStructName id)
+    return (TPtr $ TStructName id, VReg ptr)
+  Abs.ENull id -> do
+    return (TStructName id, VNull)
+  Abs.EField (Abs.EVar clsVar) fieldId -> do
+    vnv <- gets venv
+    case Map.lookup clsVar vnv of
+      Nothing -> undefined
+      Just base@(TPtr (TStructName cName), VReg n) -> do
+        cenv <- gets clsenv
+        let cMap = cenv Map.! cName
+        case Map.lookup fieldId cMap of
+          Nothing -> throwError $ T.pack $ printf "class %s got no field %s!\n in %s" (show cName) (show fieldId) (show e)
+          Just (num, typ) -> do
+            fieldLoc <- getFresh
+            emit $ GetElemPtr (VReg fieldLoc) (TStructName cName) [
+              base,
+              (TInt, VInt 0),
+              (TInt, VInt num)]
+            res <- getFresh
+            emit $ Load (VReg res) typ (TPtr typ, VReg fieldLoc)
+            return (typ, VReg res)
+        
+      Just (t,_) -> throwError $ T.pack $ printf "%s is not class-type!\n in %s" (show t) (show e) 
   Abs.EVar id -> getVar id
   Abs.ELitInt n -> return (TInt, VInt n)
   Abs.ELitTrue -> return (TBool, VBool True)
@@ -179,6 +194,7 @@ genExp e = case e of
           Abs.EQU -> EQU
           Abs.NE  -> NE
     case (t1,t2) of
+      (TStructName _, TStructName _) -> undefined -- TODO
       (TInt, TInt) -> case (v1,v2) of
         (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
         _ -> do
@@ -312,7 +328,7 @@ mapType t = case t of
         Abs.Str -> TPtr TChar
         Abs.Bool -> TBool
         Abs.Void -> TVoid
-        Abs.ClassType id -> TStructName id
+        Abs.ClassType id -> TPtr $ TStructName id
         _ -> error "internal error mapType"
 
 defaultVal :: LLVMType -> LLVMVal
@@ -349,19 +365,33 @@ genStmt s (inner, outer) = do
       modify \s -> s { fenv = fnv', venv = vnv'}
       return (inner ++ map (^.Abs.iid) items, outer)
     Abs.Ass left e -> do
+      val <- genExp e
       case left of
         Abs.EVar id -> do
           case id `elem` inner of
             True -> do
-              val <- genExp e
               modify \s -> s { venv = Map.insert id val vnv }
               return (inner, outer)
             False -> do
-              val <- genExp e
               let vnv' = Map.insert id val vnv
               modify \s -> s { venv = Map.insert id val vnv }
               return (inner, Map.insert id val outer)
-        _ -> undefined -- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>TODOTODO
+        Abs.EField (Abs.EVar clsVar) fieldId -> do
+          cenv <- gets clsenv
+          -- gets venv >>= traceM .show
+          base@(TPtr (TStructName clsName), VReg n) <- getVar clsVar
+          let (num,t) = (cenv Map.! clsName) Map.! fieldId
+          -- bitcastField <- getFresh
+          fieldLoc <- getFresh
+          emit $ GetElemPtr (VReg fieldLoc) (TStructName clsName) [
+            base,
+            (TInt, VInt 0),
+            (TInt, VInt num)]
+          -- emit $ BitCast (VReg bitcastField) (TPtr $ TStructName clsName, VReg fieldLoc) (TPtr t)
+          emit $ Store val $ (TPtr t, VReg fieldLoc)
+          case clsVar `elem` inner of
+            True -> return (inner, outer)
+            False -> return (inner, outer)
     Abs.BStmt b -> do
       out <- genBlock b
       modify \s -> s { venv = Map.union out vnv }
@@ -535,7 +565,7 @@ doAdd id x = do
 
 t0 :: Abs.Program -> FuncEnv
 t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f (filter (is Abs._FnDef) topDefs)  where
-  f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
+  f = \(Abs.FnDef ret id args _) -> (id, TFun (mapType ret) (map mapType (map (^.Abs.t) args)))
 
 
 createClsEnvMap :: [Abs.ClassDecl] -> Map.Map Abs.Ident (Integer, LLVMType)
