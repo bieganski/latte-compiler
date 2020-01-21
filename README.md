@@ -19,6 +19,61 @@ int main () {
 }
 ```
 
+
+```java
+
+class list {
+  int elem;
+  list next;
+}
+
+// outputs "50 100"
+int main() {
+  printInt(length(fromTo(1,50)));
+  printInt(length2(fromTo(1,100)));
+  return 0;
+}
+
+int head (list xs) {
+  return xs . elem;
+}
+ 
+list cons (int x, list xs) {
+  list n;
+  n = new list;
+  n.elem = x;
+  n.next = xs;
+  return n;
+}
+
+int length (list xs) {
+  if (xs==(list)null)
+    return 0;
+  else
+    return 1 + length (xs.next);
+}
+
+list fromTo (int m, int n) {
+  if (m>n)
+    return (list)null;
+  else 
+    return cons (m,fromTo (m+1,n));
+}
+
+
+```
+
+
 ### Optimizations
-* Global strings reusage 
-* PHI Nodes instead of memory allocation
+* Code generated in SSA form
+* Global strings reusage
+* Removal of unreachable blocks of code
+* PHI Nodes insertion instead of memory allocation
+
+
+### Build
+
+```
+make all
+```
+
