@@ -1,4 +1,5 @@
-optymalizacje:
+# optymalizacje:
+
 * użycie PHI zamiast alloca
 * obliczanie tego, co możliwe podczas kompilacji
 * pełna eliminacja nieosiągalnych bloków (frontend)
@@ -6,5 +7,7 @@ optymalizacje:
   string b = "ABC";
     spowoduje utworzenie tylko jednego egzemplarza globalnego napisu
 
-rozszerzenia:
-na razie brak.
+
+# rozszerzenia:
+
+* struktury, bez metod
