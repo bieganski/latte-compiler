@@ -115,7 +115,7 @@ genExp e = case e of
     emit $ BitCast (VReg ptr) (TPtr TChar, VReg _ptr) (TPtr $ TStructName id)
     return (TPtr $ TStructName id, VReg ptr)
   Abs.ENull id -> do
-    return (TStructName id, VNull)
+    return (TPtr (TStructName id), VNull)
   Abs.EField (Abs.EVar clsVar) fieldId -> do
     vnv <- gets venv
     case Map.lookup clsVar vnv of
@@ -194,7 +194,25 @@ genExp e = case e of
           Abs.EQU -> EQU
           Abs.NE  -> NE
     case (t1,t2) of
-      (TStructName _, TStructName _) -> undefined -- TODO
+      (tt@(TPtr (TStructName id)), TPtr (TStructName id2)) -> do
+        case id == id2 of
+          False -> throwError $ T.pack $ "frontend hole: type error during struct comparision"
+          True -> do
+            f <- getFresh
+            emit $ Cmp (VReg f) op tt v1 v2
+            return $ (TBool, VReg f)
+            {-
+            case (v1, v2) of
+              (VNull, VNull) -> case op of
+                EQU -> return true
+                NE -> return false
+              (VNull, _) -> case op of
+                EQU -> return false
+                NE -> return true
+              (_, VNull) -> case op of
+                EQU -> return false
+                NE -> return true
+-}
       (TInt, TInt) -> case (v1,v2) of
         (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
         _ -> do
@@ -252,6 +270,7 @@ genExp e = case e of
       VBool True -> return (TBool, VBool True)
       VBool False -> genExp e2
       VReg _ -> jumpAndOr e2 v1 EQU
+  _ -> throwError $ T.pack $  "debug: " ++ (show e)
 
 updateBlockNum :: Integer -> GenM ()
 updateBlockNum num = modify $ \s -> s {currBlock = num}
@@ -337,6 +356,7 @@ defaultVal t = case t of
   TPtr TChar -> VGlobStr 0
   TBool -> VBool False
   TVoid -> VVoid
+  _ -> error "STRUKTURA TODO defaultVal"
 
 declChangeEnv :: (FuncEnv, VarEnv) -> (Abs.Type, Abs.Item) -> GenM (FuncEnv, VarEnv)
 declChangeEnv (fenv,venv) (t, (Abs.NoInit id)) = do
