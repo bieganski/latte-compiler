@@ -53,7 +53,8 @@ data LLVMType =
   TFun LLVMType [LLVMType] |
   TPtr LLVMType |
   TLabel |
-  TStruct [LLVMType]
+  TStruct [LLVMType] |
+  TStructName Abs.Ident
   deriving (Eq, Ord)
 
 instance Show LLVMType where
@@ -66,7 +67,8 @@ instance Show LLVMType where
     TLabel -> "label"
     TArr num t -> "[" ++ (show num) ++ " x " ++ (show t) ++ "]"
     TFun ret args -> "<<TSfun, shouldn't be visible>>"
-    TStruct ts -> "{ " ++ ( concat (map showtv (zip ts (repeat VDummy))) ) ++ " }"
+    TStruct ts -> "{ " ++ ( buildCommaString (map showw ts) )  ++ " }"
+    TStructName (Abs.Ident s) -> "%struct." ++ s
 
 data LLVMVal = VDummy
              | VInt Integer
@@ -75,6 +77,7 @@ data LLVMVal = VDummy
              | VGlobStr Integer
              | VLabel Integer
              | VReg Integer
+             | VStruct [LLVMVal]
              deriving (Eq, Ord)
 
 instance Show LLVMVal where
@@ -106,6 +109,8 @@ data Instr =
   | Comment String
   | Label LLVMVal
   | StructDef String LLVMType
+  | GetOffsetPtr LLVMVal LLVMType
+  | PtrToInt LLVMVal LLVMTypeVal
   deriving (Eq, Ord)
 
 instance Show Instr where
@@ -126,7 +131,15 @@ instance Show Instr where
     Comment s -> "; " ++ s
     Label n -> (show n) ++ ":"
     StructDef id t -> "%struct." ++ id ++ " = type " ++ (show t)
-    
+    GetOffsetPtr f@(VReg _) t@(TStructName _) -> (show f) ++ " = getelementptr " ++ (show t) ++ ", " ++ (show t) ++ "* null, i32 1" 
+    PtrToInt x@(VReg _) (t@(TStructName _), y@(VReg _)) -> (show x) ++ " = ptrtoint " ++ (showw t) ++ " " ++ (show y) ++ " to i32"   
+
+
+showw :: LLVMType -> String
+showw t = case t of
+  TStructName id -> (show t) ++ "*"
+  _ -> show t
+
 showtv :: LLVMTypeVal -> String
 showtv (a,b) = (show a) ++ " " ++ (show b)
 

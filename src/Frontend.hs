@@ -797,5 +797,4 @@ checkAll wholeTree@(Program defs) = do
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ classDefs ++ (map fixReturnLack defs)
   -- traceM $ printTree newTreeWithRets
-  traceM $ "FRONTEND OK"
   return newTreeWithRets

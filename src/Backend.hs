@@ -25,6 +25,12 @@ import qualified Data.Text as T
 import qualified Data.Set as Set
 import qualified Data.List.Unique as LU
 
+import Control.Lens.Extras(is)
+import Data.Bifunctor
+
+import Data.List (sortBy)
+import Data.Function (on)
+
 import Debug.Trace
 
 
@@ -36,6 +42,7 @@ absTypeToLLVM t = case t of
             Abs.Str -> TPtr TChar
             Abs.Bool -> TBool
             Abs.Void -> TVoid
+            Abs.ClassType id -> TStructName id
             _ -> error "not implemented (absTypeToLLVM)"
 
 getFresh :: GenM Integer
@@ -52,12 +59,15 @@ type VarEnv = Map.Map Abs.Ident LLVMTypeVal
 -- number of current block
 -- function env
 -- variable env (per block)
+-- classes env (integer is field position, counting from 0)
 data GenS = GenS {ins :: [Instr],
                  fresh :: Integer,
                  lits :: Map.Map LLVMVal String,
                  currBlock :: Integer,
                  fenv :: FuncEnv,
-                 venv :: VarEnv}
+                 venv :: VarEnv,
+                 clsenv :: Map.Map Abs.Ident (Map.Map Abs.Ident (Integer, LLVMType))
+                 }
 
 
 type GenM = StateT GenS (Except T.Text)
@@ -87,9 +97,30 @@ addGlobStr s = do
       return $ VGlobStr $ toInteger $ Map.size m
     [(VGlobStr num, _)] -> return $ VGlobStr num
     
+getStructWholeType :: Abs.Ident -> GenM LLVMType
+getStructWholeType id = do
+  let mySort = reverse . sortBy (flip compare `on` fst)
+  let strT = \clsMap -> TStruct $ map snd $ mySort $ Map.elems clsMap
+  m <- gets clsenv
+  return $ strT $ m Map.! id
+
+computeStructSize :: Abs.Ident -> GenM LLVMTypeVal
+computeStructSize id = do
+  t <- getStructWholeType id
+  _s <- getFresh
+  emit $ GetOffsetPtr (VReg _s) (TStructName id)
+  s <- getFresh
+  emit $ PtrToInt (VReg s) (TStructName id, VReg _s)
+  return (TInt, VReg s)
 
 genExp :: Abs.Expr -> GenM LLVMTypeVal
 genExp e = case e of
+  Abs.ENew (Abs.ClassType id) -> do
+    csl <- gets clsenv
+    size@(TInt, VReg x) <- computeStructSize id
+    ptr <- getFresh
+    emit $ FunCall (VReg ptr) tstr "_malloc" [size]
+    return (tstr, VReg ptr)
   Abs.EVar id -> getVar id
   Abs.ELitInt n -> return (TInt, VInt n)
   Abs.ELitTrue -> return (TBool, VBool True)
@@ -227,34 +258,6 @@ jumpAndOr e2 v1 op = do
   emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel br1)]
   return (TBool, VReg res)
 
-{-
-jumpAndOr :: Abs.Expr -> LLVMVal -> RelOp -> GenM LLVMTypeVal
-jumpAndOr e2 v1 op = do
-        f <- getFresh
-        emit $ Cmp (VReg f) op TBool v1 (VInt 0)
-        GenM ins n m blockNum _ _ <- get
-        branch1 <- getFresh
-        -- branch2 <- getFresh // we cannot do that, because register numbers must be +1 each
-        let cond = \b2 -> BrCond (TBool, VReg f) (TLabel, VLabel branch1) (TLabel, VLabel b2)
-        put ([],n+1,m,branch1) -- entering new block
-        -- emit $ Comment $ "im in block " ++ (show branch1)
-        emit $ Label $ VLabel $ toInteger $ branch1
-        (_, v2) <- genExp e2 -- during that, new instructions were added
-        (e2ins,_,_,r) <- get -- these are new ones (cause we started with [] list)
-        branch2 <- getFresh
-        let allIns = concat [[cond branch2],
-                             reverse e2ins,
-                             [Br (TLabel, VLabel branch2)]] -- in proper order
-        (_,n,m,b) <- get
-        put (reverse $ (reverse ins) ++ allIns,n,m,branch2)
-        emit $ Label $ VLabel $ toInteger $ branch2
-        -- emit $ Comment $ "im in block " ++ (show branch2)
-        res <- getFresh
-        emit $ Phi (VReg res) TBool [(v1, VLabel blockNum), (v2, VLabel r)]
-        return (TBool, VReg res)
--}
-
-
 tstr = TPtr TChar
 
 -- http://www.cplusplus.com/reference/cstring/strcpy/ and /strlen and /strcat 
@@ -309,6 +312,7 @@ mapType t = case t of
         Abs.Str -> TPtr TChar
         Abs.Bool -> TBool
         Abs.Void -> TVoid
+        Abs.ClassType id -> TStructName id
         _ -> error "internal error mapType"
 
 defaultVal :: LLVMType -> LLVMVal
@@ -344,16 +348,20 @@ genStmt s (inner, outer) = do
       (fnv', vnv') <- foldM declChangeEnv env $ zip (repeat t) items
       modify \s -> s { fenv = fnv', venv = vnv'}
       return (inner ++ map (^.Abs.iid) items, outer)
-    Abs.Ass id e -> case id `elem` inner of
-      True -> do
-        val <- genExp e
-        modify \s -> s { venv = Map.insert id val vnv }
-        return (inner, outer)
-      False -> do
-        val <- genExp e
-        let vnv' = Map.insert id val vnv
-        modify \s -> s { venv = Map.insert id val vnv }
-        return (inner, Map.insert id val outer)
+    Abs.Ass left e -> do
+      case left of
+        Abs.EVar id -> do
+          case id `elem` inner of
+            True -> do
+              val <- genExp e
+              modify \s -> s { venv = Map.insert id val vnv }
+              return (inner, outer)
+            False -> do
+              val <- genExp e
+              let vnv' = Map.insert id val vnv
+              modify \s -> s { venv = Map.insert id val vnv }
+              return (inner, Map.insert id val outer)
+        _ -> undefined -- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>TODOTODO
     Abs.BStmt b -> do
       out <- genBlock b
       modify \s -> s { venv = Map.union out vnv }
@@ -526,12 +534,20 @@ doAdd id x = do
 
 
 t0 :: Abs.Program -> FuncEnv
-t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f topDefs  where
+t0 (Abs.Program topDefs) = Map.union builtInFunctions $ Map.fromList $ map f (filter (is Abs._FnDef) topDefs)  where
   f = \(Abs.FnDef ret id args _) -> (id, TFun (absTypeToLLVM ret) (map absTypeToLLVM (map (^.Abs.t) args)))
 
 
+createClsEnvMap :: [Abs.ClassDecl] -> Map.Map Abs.Ident (Integer, LLVMType)
+createClsEnvMap ds = Map.fromList $ zip (map (^.Abs.cdid) ds) $ zip [0..] (map (mapType . (^.Abs.ct)) ds)
+
+clsenv0 :: Abs.Program -> Map.Map Abs.Ident (Map.Map Abs.Ident (Integer, LLVMType))
+clsenv0 (Abs.Program defs) = let cds = filter (is Abs._ClassDef) defs in
+  Map.fromList $ zip (map (^.Abs.tid) cds) $ map createClsEnvMap $ map (^.Abs.cb.Abs.cdecls) cds
+
+
 s0 :: Abs.Program -> GenS
-s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty
+s0 p = GenS [] 1 (Map.singleton (VGlobStr 0) "") 1 (t0 p) Map.empty (clsenv0 p)
   
 builtInFunctions = Map.fromList
   [(Abs.Ident "printString", TFun TVoid [tstr]),
@@ -551,8 +567,6 @@ buildIR filename content = buildText [buildLines $ prolog (show filename),
                                       content,
                                       buildLines epilog]
 
-runGenM :: Abs.Program -> GenM a -> Except T.Text a
-runGenM p comp = evalStateT comp $ s0 p
 
 createFunctionEnv :: [Abs.Arg] -> Map.Map Abs.Ident LLVMTypeVal
 createFunctionEnv args = Map.fromList $ map f (zip [0..] args)
@@ -576,14 +590,28 @@ emitTopDefIR (Abs.FnDef ret (Abs.Ident id) args block) = do
   modify \s -> s {ins = fixEmptyBlock (mapType ret) ii}
 
 
+emitStructDecls :: GenM ()
+emitStructDecls = do
+  cls <- gets clsenv
+  let comp = \(idString, structType) -> emit $ StructDef idString structType
+  let mySort = reverse . sortBy (flip compare `on` fst)
+  let strT = \clsMap -> TStruct $ map snd $ mySort $ Map.elems clsMap
+  flip forM_ comp $ map (bimap (^.Abs.idid) strT) (Map.toList cls)
+   
+
 emitProgramIR :: FilePath -> Abs.Program -> GenM T.Text
 emitProgramIR fp (Abs.Program topDefs) = do
-  forM_ topDefs emitTopDefIR
+  let fun = filter (is Abs._FnDef) topDefs
+  emitStructDecls
+  forM_ fun emitTopDefIR
   emitGlobalStrDecls
   ii <- gets ins
   let decls = map (\(Abs.Ident a, b) -> Declare a b) $ Map.toList builtInFunctions
   let content = buildLines $ map show $ decls ++ (reverse ii)
   return $ buildIR fp content
+
+runGenM :: Abs.Program -> GenM a -> Except T.Text a
+runGenM p comp = evalStateT comp $ s0 p
   
 runBackend :: FilePath -> Abs.Program -> Either T.Text T.Text
 runBackend fp p = runExcept $ runGenM p (emitProgramIR fp p)

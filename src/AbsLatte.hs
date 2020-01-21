@@ -7,7 +7,8 @@ module AbsLatte where
 import Control.Lens
 
 
-newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
+newtype Ident = Ident { _idid :: String } deriving (Eq, Ord, Show, Read)
+
 data Program = Program { _defs :: [TopDef] }
   deriving (Eq, Ord, Show, Read)
 
@@ -88,5 +89,6 @@ makeLenses ''Program
 
 makeLenses ''ClassDecl
 makeLenses ''ClassBlock
+makeLenses ''Ident
 
 makePrisms ''TopDef
