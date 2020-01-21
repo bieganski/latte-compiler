@@ -71,6 +71,54 @@ list fromTo (int m, int n) {
 * PHI Nodes insertion instead of memory allocation
 
 
+### Generated code
+
+``` java
+
+int f(int iters) {
+    int a = 1;
+    while(iters > 0) {
+        a++;
+        iters--;
+    }
+    return a;
+}
+
+int main() {
+    printInt(f(5));
+    return 0;
+}
+
+```
+
+For above code `latc_llvm` program generates IR presented below:
+
+``` llvm
+define i32@f(i32 %R.0) {
+L.1:
+    br label %L.2
+L.2:
+    %R.3 = phi i32 [1, %L.1], [%R.7, %L.6]
+    %R.4 = phi i32 [%R.0, %L.1], [%R.8, %L.6]
+    %R.5 = icmp sgt i32 %R.4, 0
+    br i1 %R.5, label %L.6, label %L.9
+L.6:
+    %R.7 = add i32 %R.3, 1
+    %R.8 = add i32 %R.4, -1
+    br label %L.2
+L.9:
+    ret i32 %R.3
+}
+
+define i32@main() {
+L.0:
+    %R.1 = call i32 @f(i32 5)
+    call void @printInt(i32 %R.1)
+    ret i32 0
+}
+```
+
+
 ### Build
 
 ```
