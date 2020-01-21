@@ -36,7 +36,6 @@ run :: Verbosity -> FilePath -> String -> IO ()
 run v fp s = do
   let ts = pProgram $ myLLexer s
   let outFile = dropExtension fp <.> "ll"
-  putStrLn $ show fp
   case ts of
            Bad s    -> do
              hPutStrLn stderr "ERROR"
@@ -51,7 +50,7 @@ run v fp s = do
                  let res2 = runBackend fp newTree
                  case res2 of
                    Right t -> do
-                     hPutStrLn stderr $ "OK" -- ++ T.unpack t
+                     hPutStrLn stderr $ "OK"
                      writeFile outFile $ T.unpack t
                    Left t -> do
                      hPutStrLn stderr $ "ERROR"

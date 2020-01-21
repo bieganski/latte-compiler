@@ -201,18 +201,6 @@ genExp e = case e of
             f <- getFresh
             emit $ Cmp (VReg f) op tt v1 v2
             return $ (TBool, VReg f)
-            {-
-            case (v1, v2) of
-              (VNull, VNull) -> case op of
-                EQU -> return true
-                NE -> return false
-              (VNull, _) -> case op of
-                EQU -> return false
-                NE -> return true
-              (_, VNull) -> case op of
-                EQU -> return false
-                NE -> return true
--}
       (TInt, TInt) -> case (v1,v2) of
         (VInt _, VInt _) -> return $ computeRelOp v1 v2 op
         _ -> do

@@ -53,8 +53,16 @@ functionNamesCheck p@(Program topDefs) = do
   when (reps /= []) (throwError $ T.pack $ "function names not unique: " ++ (show reps))
   when (not $ "main" `elem` names) (throwError $ T.pack "'main' not found!")
 
+hlp it = case it of
+  NoInit _ ->  []
+  Init _ e ->  [e]
+
 listStmtExpressions :: Stmt -> [Expr]
-listStmtExpressions = undefined
+listStmtExpressions s = case s of
+  AbsLatte.Empty -> []
+  BStmt b -> listBlockExpressions b
+  Decl _ items -> concat $ map hlp items
+  _ -> []
 
 listBlockExpressions :: Block -> [Expr]
 listBlockExpressions (Block stmts) = foldr (++) [] (map listStmtExpressions stmts)
@@ -768,7 +776,26 @@ checkClassFieldsUnique (ClassDef id (ClassBlock decls)) = do
 
 
 type StructMap = Map.Map Ident (Map.Map Ident Type)
-             
+
+checkClassExistsExpr :: StructMap -> Expr -> ExceptT T.Text IO ()
+checkClassExistsExpr m _e = case _e of
+  ENew (ClassType id) -> do
+    case Map.lookup id m  of
+      Nothing -> throwError $ T.pack $ "error in " ++ (show _e) ++ ":usage of not defined class: " ++ (show id)
+      Just _ -> return ()
+  ENull id -> do
+    case Map.lookup id m  of
+      Nothing -> throwError $ T.pack $ "error in " ++ (show _e) ++ ": usage of not defined class: " ++ (show id)
+      Just _ -> return ()
+  _ -> return ()
+
+checkClassExists :: Program -> StructMap -> ExceptT T.Text IO ()
+checkClassExists (Program topDefs) m = do
+  let fndefs = filter (is _FnDef) topDefs
+  let exps = listProgramExpressions $ Program fndefs
+  forM_ exps (checkClassExistsExpr m)
+  return ()
+
 checkAll :: Program -> ExceptT T.Text IO Program
 checkAll wholeTree@(Program defs) = do
   let tree = Program $ filter (is _FnDef) defs
@@ -779,6 +806,8 @@ checkAll wholeTree@(Program defs) = do
   let clsIds = map (^.tid) classDefs
   let clsTypeLists = map ((map help) . (^.cb.cdecls)) classDefs
   let clsMap = Map.fromList $ zip clsIds (map Map.fromList clsTypeLists)
+
+  checkClassExists wholeTree clsMap
   
   resFunctions <- runStateM (checkFunctionCases tree) funCheckState0
   resArgs <- uniqueArgs tree
@@ -794,9 +823,6 @@ checkAll wholeTree@(Program defs) = do
     (typeCheck tree)
     (Ts.FunName (Ident "dummy"), builtins, Map.empty, clsMap)
   newTree@(Program defs) <- removeUnreachableCode tree
-  -- newTree  
-  -- traceM $ printTree newTree
   resReturn <- returnsProperly newTree
   let newTreeWithRets = Program $ classDefs ++ (map fixReturnLack defs)
-  -- traceM $ printTree newTreeWithRets
   return newTreeWithRets

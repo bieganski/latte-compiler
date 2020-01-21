@@ -113,12 +113,12 @@ define i8* @_malloc(i32) #0 {
   store i32 %0, i32* %2, align 4
   %3 = load i32, i32* %2, align 4
   %4 = sext i32 %3 to i64
-  %5 = call noalias i8* @malloc(i64 %4) #7
+  %5 = call noalias i8* @calloc(i64 %4, i64 1) #7
   ret i8* %5
 }
 
 ; Function Attrs: nounwind
-declare noalias i8* @malloc(i64) #4
+declare noalias i8* @calloc(i64, i64) #4
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define i8* @_strcat(i8*, i8*) #0 {
