@@ -274,11 +274,16 @@ jumpAndOr e2 v1 op = do
   emit $ Label $ VLabel $ toInteger br1
   updateBlockNum br1
   (_, v2) <- genExp e2
+  --
+  b <- gets currBlock
+  --
   emit $ Br (TLabel, VLabel br2)
   emit $ Label $ VLabel $ toInteger br2
   updateBlockNum br2
   res <- getFresh
-  emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel br1)]
+  --
+  -- emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel br1)]
+  emit $ Phi (VReg res) TBool [(v1, VLabel startBlock), (v2, VLabel b)]
   return (TBool, VReg res)
 
 tstr = TPtr TChar
