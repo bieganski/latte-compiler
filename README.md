@@ -144,3 +144,10 @@ It will create and link LLVM IR and bitcode
 full/path/test.ll
 full/path/test.bc
 ```
+
+Now, simply run LLVM interpreter for your native architecture:
+
+```
+lli full/path/test.bc
+```
+or compile it to chosen asembler.
