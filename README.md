@@ -132,7 +132,7 @@ After build phase, `latc` binary file will be created.
 There is bash script 'latc_llvm'
 Let `./full/path/test.lat` be file containing Latte source code.
 
-run
+Execute command below:
 
 ```bash
 ./latc_llvm full/path/test.lat
