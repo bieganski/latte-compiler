@@ -125,3 +125,22 @@ L.0:
 make all
 ```
 
+
+### Usage
+
+After build phase, `latc` binary file will be created.
+There is bash script 'latc_llvm'
+Let `./full/path/test.lat` be file containing Latte source code.
+
+run
+
+```bash
+./latc_llvm full/path/test.lat
+```
+
+It will create and link LLVM IR and bitcode
+
+```
+full/path/test.ll
+full/path/test.bc
+```
